@@ -1,0 +1,23 @@
+---
+description: Final Bell Unreal boxing project, combat authority and two-person workflow.
+alwaysApply: true
+---
+
+# Final Bell
+
+- Product display name: Final Bell. New native module: FinalBell. Python prefix: final_bell.
+- Read the relevant requirements in FinalBell_Cursor_Master_Prompt.md and docs/FinalBell_Design_Review_and_Decisions.md. The longer renamed reference preserves future scope; the review resolves conflicts. Latest user instructions take precedence.
+- Keep gameplay first: training, AI sparring and 1v1 multiplayer; preserve stamina, swelling/cuts/blood, server-controlled flash KOs and readable boxing records.
+- FB-ENH-01 through FB-ENH-06 are required phased features: signature defense, explanatory flash-KO replay, actionable training feedback, uncertain scouting cards, explorable records/rank-change explanations, and private rooms/one ranked pool/later fight nights and league tools. Track status and evidence in docs/FeatureStatus.md. Do not treat these six as optional or claim they are implemented from documentation alone.
+- Plan for multiplayer from the start. P1 includes an authoritative two-client combat proof; public ranked services are a later gate.
+- Native Unreal C++ owns frame-critical combat. Python world/reference/backend code must not run in the combat frame loop. Editor Python is not packaged gameplay.
+- Server validates intents and owns hits, resources, referee state and result. Clients never supply authoritative damage or wins.
+- Keep true ability, scouting, readiness, player MMR, fighter merit ranking and title eligibility distinct.
+- Isolate offline/official and traditional/VR state by domain/universe. Do not import local stats into official competition.
+- Exact seeded replay is for pinned headless models. Real-time replay uses authoritative events/snapshots and compatible UE recording; do not assume cross-build physics determinism.
+- Two people: one owner and one reviewer per task; agree versioned contracts and avoid concurrent edits to shared binary assets. Preserve existing work.
+- Implement the current milestone in small compilable increments. Update docs/Progress.md with real tests, blockers and next action.
+- Inspect installed APIs/plugins and actual assets. Never invent .uasset files, source inspections, test results or completed editor operations.
+- Treat referenced FightVantage reuse as unverified until the exact commit, permissions, dependencies and tests are inspected. Preserve that independent project's name.
+- Existing module/class renames need asset/save compatibility and redirects. Change branding without breaking necessary legacy references.
+- Other optional suggestions, promotion depth, extensive world scale, console and VR remain gated backlog items; this does not downgrade the six FB-ENH requirements.

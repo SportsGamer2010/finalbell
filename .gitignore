@@ -1,0 +1,41 @@
+# Unreal Engine
+**/Binaries/
+**/DerivedDataCache/
+**/Intermediate/
+**/Saved/
+**/Build/
+**/FileOpenOrder/
+**/*.sln
+**/*.suo
+**/.vs/
+**/CompileCommands/
+apps/game-unreal/.vs/
+apps/game-unreal/*.sln
+apps/game-unreal/*.xcworkspace
+apps/game-unreal/Makefile
+apps/game-unreal/CMakeLists.txt
+apps/game-unreal/Content/Developers/
+apps/game-unreal/Content/Collections/
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.venv/
+**/venv/
+**/*.egg-info/
+**/dist/
+**/build/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+*.log
+docs/_last_build.log
+.env
+.env.*
+!.env.example

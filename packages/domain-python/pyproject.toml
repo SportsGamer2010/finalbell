@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "final-bell"
+version = "0.1.0"
+description = "Final Bell domain contracts and reference validation (no combat frame loop)"
+requires-python = ">=3.11"
+dependencies = [
+  "jsonschema>=4.22.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["final_bell*"]
+
+[tool.pytest.ini_options]
+testpaths = ["../../tests/golden"]
+pythonpath = ["."]

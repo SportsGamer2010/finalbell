@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://final-bell.local/schemas/fight_result.schema.json",
+  "title": "FightResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "match_id",
+    "domain_id",
+    "universe_id",
+    "rules_version",
+    "fighter_a_id",
+    "fighter_b_id",
+    "outcome",
+    "finalized_at",
+    "idempotency_key"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "match_id": { "type": "string", "minLength": 1 },
+    "domain_id": { "type": "string", "enum": ["TRADITIONAL", "VR"] },
+    "universe_id": { "type": "string", "minLength": 1 },
+    "rules_version": { "type": "string", "minLength": 1 },
+    "fighter_a_id": { "type": "string", "minLength": 1 },
+    "fighter_b_id": { "type": "string", "minLength": 1 },
+    "outcome": {
+      "type": "string",
+      "enum": ["pending", "ud", "sd", "md", "draw", "ko", "tko", "retirement", "dq", "no_contest", "technical"]
+    },
+    "winner_fighter_id": { "type": ["string", "null"] },
+    "rounds_completed": { "type": "integer", "minimum": 0 },
+    "authorized_ledgers": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["offline_career", "private_league", "normalized_ranked", "online_universe"] }
+    },
+    "result_hash": { "type": "string" },
+    "finalized_at": { "type": "string", "format": "date-time" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "server_identity": { "type": "string" }
+  }
+}

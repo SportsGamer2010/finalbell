@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0.0",
+  "sequence": 1,
+  "client_time_seconds": 12.5,
+  "attack": "jab",
+  "guard_held": false,
+  "guard": "open",
+  "fighter_id": "ftr_seed_alpha",
+  "match_id": "match_dev_001"
+}

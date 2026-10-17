@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://final-bell.local/schemas/fighter_readiness.schema.json",
+  "title": "FighterReadiness",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fighter_id",
+    "domain_id",
+    "universe_id",
+    "conditioning",
+    "fatigue",
+    "rust",
+    "as_of"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "fighter_id": { "type": "string", "minLength": 1 },
+    "domain_id": { "type": "string", "enum": ["TRADITIONAL", "VR"] },
+    "universe_id": { "type": "string", "minLength": 1 },
+    "conditioning": { "type": "number", "minimum": 0, "maximum": 1 },
+    "fatigue": { "type": "number", "minimum": 0, "maximum": 1 },
+    "rust": { "type": "number", "minimum": 0, "maximum": 1 },
+    "weight_kg": { "type": "number", "minimum": 40, "maximum": 200 },
+    "injury_burden": { "type": "number", "minimum": 0, "maximum": 1 },
+    "as_of": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://final-bell.local/schemas/combat_intent.schema.json",
+  "title": "CombatIntent",
+  "description": "Client intent only. Never carries damage, stamina outcomes, or win authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sequence",
+    "client_time_seconds",
+    "attack",
+    "guard_held",
+    "guard"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "client_time_seconds": { "type": "number" },
+    "attack": { "type": "string", "enum": ["none", "jab", "cross"] },
+    "guard_held": { "type": "boolean" },
+    "guard": { "type": "string", "enum": ["open", "high", "low"] },
+    "fighter_id": { "type": "string" },
+    "match_id": { "type": "string" }
+  }
+}

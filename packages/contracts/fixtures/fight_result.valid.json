@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "match_id": "match_dev_001",
+  "domain_id": "TRADITIONAL",
+  "universe_id": "offline_local",
+  "rules_version": "bout_rules_1.0.0",
+  "fighter_a_id": "ftr_seed_alpha",
+  "fighter_b_id": "ftr_seed_bravo",
+  "outcome": "ud",
+  "winner_fighter_id": "ftr_seed_alpha",
+  "rounds_completed": 3,
+  "authorized_ledgers": ["offline_career"],
+  "result_hash": "dev_placeholder_hash",
+  "finalized_at": "2026-10-17T12:30:00Z",
+  "idempotency_key": "match_dev_001:finalize:v1",
+  "server_identity": "local_dev"
+}

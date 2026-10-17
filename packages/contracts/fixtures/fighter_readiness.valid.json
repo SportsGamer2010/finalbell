@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "fighter_id": "ftr_seed_alpha",
+  "domain_id": "TRADITIONAL",
+  "universe_id": "offline_local",
+  "conditioning": 0.82,
+  "fatigue": 0.15,
+  "rust": 0.05,
+  "weight_kg": 66.5,
+  "injury_burden": 0.0,
+  "as_of": "2026-10-17T12:00:00Z"
+}

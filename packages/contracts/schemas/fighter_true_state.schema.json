@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://final-bell.local/schemas/fighter_true_state.schema.json",
+  "title": "FighterTrueState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fighter_id",
+    "domain_id",
+    "universe_id",
+    "stance",
+    "division",
+    "true_ability",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "fighter_id": { "type": "string", "minLength": 1 },
+    "domain_id": { "type": "string", "enum": ["TRADITIONAL", "VR"] },
+    "universe_id": { "type": "string", "minLength": 1 },
+    "display_name": { "type": "string" },
+    "stance": { "type": "string", "enum": ["orthodox", "southpaw"] },
+    "division": { "type": "string", "minLength": 1 },
+    "height_cm": { "type": "number", "minimum": 140, "maximum": 230 },
+    "reach_cm": { "type": "number", "minimum": 140, "maximum": 240 },
+    "true_ability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["power", "speed", "durability", "defense", "stamina", "ring_iq"],
+      "properties": {
+        "power": { "type": "number", "minimum": 0, "maximum": 1 },
+        "speed": { "type": "number", "minimum": 0, "maximum": 1 },
+        "durability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "defense": { "type": "number", "minimum": 0, "maximum": 1 },
+        "stamina": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ring_iq": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

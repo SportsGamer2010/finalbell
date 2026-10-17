@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "fighter_id": "ftr_seed_alpha",
+  "domain_id": "TRADITIONAL",
+  "universe_id": "offline_local",
+  "display_name": "Alex Rivera",
+  "stance": "orthodox",
+  "division": "welterweight",
+  "height_cm": 175,
+  "reach_cm": 180,
+  "true_ability": {
+    "power": 0.62,
+    "speed": 0.71,
+    "durability": 0.66,
+    "defense": 0.68,
+    "stamina": 0.7,
+    "ring_iq": 0.64
+  },
+  "updated_at": "2026-10-17T12:00:00Z"
+}

@@ -1,0 +1,2006 @@
+FINAL BELL — RENAMED PARTNER DESIGN REFERENCE
+Updated: 17 October 2026
+
+This preserves the full supplied 30-section design, with the product name updated and targeted corrections for two-person ownership, early networking, audit/replay guarantees and inherited verification claims.
+
+Use FinalBell_Cursor_Master_Prompt.md and FinalBell_Design_Review_and_Decisions.md as the active implementation baseline. Their P0–P6 gates override illustrative phase numbers/durations and sequencing left in this larger reference. Future capabilities are retained, not all required for the first prototype. The supplied illustrative SQL is not production-ready DDL.
+
+No game repository, playable build or final art assets were attached. No referenced FightVantage module was independently inspected or tested in this review.
+
+======================================================================
+
+FINAL BELL 
+
+Game Design & Technical Architecture Specification 
+
+Merged working reference  |  Version 1.1  |  17 October 2026 
+
+Traditional PC/console boxing • Autonomous single-player universe • Competitive online ecosystem • Future standalone VR domain 
+
+Document status: Proposed architecture and production requirements. Reuse findings are inherited from the supplied document and require independent verification of the actual FightVantage repository, commit, rights, dependencies and tests; balancing parameters require validation. 
+
+Executive production decision 
+
+Final Bell is a gameplay-first boxing simulation. Skill-based fighting, fighter development and championship competition are primary; promotion management is secondary. Single-player must be complete without online services. Traditional and VR use common simulation contracts but have independent competitive universes, rankings, records and championship histories. 
+
+Document control 
+
+Item 
+
+Specification 
+
+Product 
+
+Final Bell 
+
+Scope 
+
+Game design, gameplay systems, simulation, infrastructure, production and verification 
+
+Target initial release 
+
+PC, traditional input; console feasibility during preproduction 
+
+Future extension 
+
+VR product with separate competitive domain 
+
+Decision authority 
+
+Design lead / technical lead / production lead 
+
+Status 
+
+Architecture baseline; parameters subject to prototypes and playtests 
+
+ 
+
+Contents 
+
+01   Product vision and design pillars 
+
+02   Modes, identity and player journeys 
+
+03   World topology, clocks and persistence 
+
+04   Fighter creation, attributes and development 
+
+05   Real-time boxing combat 
+
+06   AI fighters and autonomous world 
+
+07   Training minigames and career progression 
+
+08   Rankings, sanctioning and championships 
+
+09   Promotion and economy 
+
+10   Multiplayer and competitive integrity 
+
+11   Technology architecture and deployment 
+
+12   Data model, SQL and event contracts 
+
+13   FightVantage component reuse assessment 
+
+14   VR expansion architecture 
+
+15   Security, operations and analytics 
+
+16   Production roadmap, staffing and milestones 
+
+17   Testing, balancing and acceptance criteria 
+
+18   Risks, open decisions and glossary 
+
+ 
+
+1. Product vision and design pillars 
+
+Positioning: a skill-based boxing game with deep career consequences in a living, generational boxing ecosystem. Players can immediately fight, learn through training, progress through official titles, or run long-form single-player careers. Autonomous simulation makes the world credible without forcing administrative micromanagement. 
+
+Pillar 
+
+Non-negotiable requirement 
+
+Combat first 
+
+Responsive, legible, tactical boxing with defense, footwork, range and stamina as first-class systems 
+
+Single-player parity 
+
+Full career, world evolution, championships and AI bouts without internet 
+
+Competitive fairness 
+
+Skill expression; validated input; bounded stat advantages; no pay-to-win 
+
+Persistent consequence 
+
+Official records, injuries, aging, contracts and title lineage survive sessions 
+
+Autonomy 
+
+AI fighters, trainers, promoters and sanctioning bodies act independently 
+
+Platform separation 
+
+Traditional and VR share source architecture, never official competition state 
+
+Determinism & audit 
+
+Pinned headless outcomes are reproducible; real-time results are auditable from authoritative versioned events and state records 
+
+2. Modes, identity and player journeys 
+
+2.1 Player identity 
+
+Default identity: player account controls a boxing stable, with optional “My Boxer” focused career onboarding. The player may directly fight as any eligible stable fighter; promotions remain an optional lightweight management layer. A fighter is an autonomous career entity and cannot be owned permanently; contracts grant representation and scheduling rights for a term. 
+
+2.2 Modes 
+
+Mode 
+
+Persistence 
+
+Authority / intent 
+
+Quick Fight 
+
+None 
+
+Local, instant bouts with configurable rules 
+
+Single-player Career 
+
+Local save 
+
+One boxer or stable; complete AI world; pause and advance calendar 
+
+Single-player Sandbox 
+
+Local save 
+
+World generation, editable rules, exhibitions and optional accelerated simulation 
+
+Online Ranked 
+
+Official traditional domain 
+
+Server authoritative; normalized or constrained competitive fighter classes 
+
+Online Universe 
+
+Official traditional domain 
+
+Persistent contracts, careers, ranking movement and sanctioned titles 
+
+Training / Sparring 
+
+Per mode 
+
+Shared combat mechanics; career consequences only where explicitly sanctioned 
+
+Events / Tournaments 
+
+Per universe 
+
+Brackets, qualifiers, eliminators, official or exhibition rules 
+
+2.3 Player journeys 
+
+First 10 minutes: tutorial guard, jab, cross, movement and first exhibition; no promotion setup required. 
+
+First 2 hours: create or select fighter; learn counters, distance and stamina; complete first sanctioned bout. 
+
+First 10 hours: form rivalry, choose training camp, compete for local/state recognition; discover evolving AI contenders. 
+
+Long-term: titles, unifications, multi-division careers, retirement, new prospects and historical records. 
+
+3. World topology, clocks and persistence 
+
+3.1 Domain boundaries 
+
+Hierarchy: Platform → Competition Domain → Universe → Organization/Promotion → Fighter. Initial domains: TRADITIONAL and VR. Domain-specific official entities have immutable domain_id; fighter IDs, titles, ranking lists, official records and career events cannot migrate across domains. Accounts and approved cosmetics may span domains. A local single-player universe is not an official online universe. 
+
+3.2 Universe classes 
+
+Class 
+
+Clock 
+
+Official records 
+
+Transfer rules 
+
+Offline private 
+
+Player-controlled 
+
+Local only 
+
+No direct export into ranked 
+
+Online private league 
+
+Server-controlled or bounded event clock 
+
+League only 
+
+Exhibition or approved migration via new official identity 
+
+Official shared 
+
+Server authoritative 
+
+Canonical for domain 
+
+Sanctioned fights only; strict event ownership 
+
+3.3 Time semantics 
+
+Represent world_time as an integer simulation timestamp (UTC-equivalent epoch plus calendar policy). Official universes advance under a server scheduler; private offline universes advance by user action or adjustable speed. Never age the same canonical fighter twice because two linked competitions advance independently. Only one canonical owner can commit a fighter career transition at a time. All contracts, training, recovery, mandatory deadlines and fights resolve against authoritative universe time. 
+
+3.4 Event sourcing and snapshots 
+
+Append immutable domain events: FighterCreated, TrainingCompleted, InjuryRecorded, ContractSigned, FightScheduled, BoutStarted, RoundCompleted, FightCertified, RankingPublished, TitleAwarded, TitleVacated, FighterRetired. Materialized SQL projections support menus and leaderboards; versioned snapshots support fast load, rollback investigation and deterministic replay. Offline saves use the same event schema and local SQLite snapshots, without implying official certification. 
+
+3.5 World simulation tick 
+
+Read next scheduled calendar events; validate domain, universe and entity versions. 
+
+Resolve health/recovery, training adaptation, contracts and matchmaking proposals. 
+
+Simulate AI-versus-AI bouts with headless bout engine, record seed and engine version. 
+
+Apply sanctioned results transactionally; update records, suspensions and mandatory obligations. 
+
+Recompute affected ranking candidates and publish versioned snapshots on scheduled cadence. 
+
+Generate news, rivalries and opportunities from canonical events; persist checkpoint. 
+
+4. Fighter creation, attributes and development 
+
+4.1 Creation and onboarding 
+
+Character creation: name, pronouns, birthplace/residence, appearance, height, reach, stance, starting weight division, boxing background, fighting style tendencies, personality and development goals. Provide appearance presets, morph controls and optional future face-scan import with consent and moderation. Validate body proportions, reach bounds and weight eligibility. Cosmetics never change hitboxes in ranked play; canonical body geometry is constrained by competition class. 
+
+4.2 Fighter model: true ability vs observed estimate 
+
+FightVantage FSE infers latent capability from historical outcomes; Final Bell generates outcomes from a true internal ability state. Maintain distinct TrueAbility, ObservedScoutingEstimate, CurrentReadiness, InjuryBurden and TacticalFamiliarity. A knockout may increase public confidence in power estimates, but does not mechanically create power. Training, aging, rehabilitation and damage cause true ability changes. Coaches/scouts see imperfect estimates; official simulation sees the true state. 
+
+FSE baseline attribute 
+
+Final Bell interpretation 
+
+power 
+
+Force production / impact ceiling, mediated by mechanics and body mass 
+
+speed 
+
+Execution speed and reaction envelope 
+
+durability 
+
+Capacity to continue under accumulated exertion and damage 
+
+defense 
+
+Defensive proficiency and positioning 
+
+stamina 
+
+Energy capacity and recovery 
+
+activity 
+
+Sustainable output tendency; separate from fight activity calendar 
+
+ring_iq_proxy 
+
+Tactical recognition and adaptability; rename internal ring_iq 
+
+finishing_ability 
+
+Ability to exploit hurt opponents and close exchanges 
+
+damage_resistance 
+
+Susceptibility to impact and stoppage; avoid rewarding repeated punishment 
+
+technical_consistency 
+
+Reliability of execution under pressure 
+
+4.3 Development math 
+
+Proposed: delta_ability = training_stimulus × execution_quality × coach_fit × aptitude × recovery × potential_headroom − aging_erosion − injury_loss. Temporary fight readiness is calculated separately from permanent talent. Attribute bounds use normalized 0–1 internal values, but presentation can use 0–100. Potential is multidimensional, not a single universal ceiling. No RPG XP and no direct per-win skill grant. 
+
+Aging uses continuous attribute-specific curves; onset and magnitude are configurable. FightVantage age modifiers and late-career erosion are starting points, not production-balanced truth. Inactivity primarily affects readiness/ring rust; permanent skill erosion requires its own time-based model. Injury burden can have both acute and persistent components. 
+
+4.4 Progression guardrails 
+
+Finite training slots per calendar week; intensity increases fatigue and injury exposure. 
+
+Diminishing returns by repeated drill, skill level, age and training load. 
+
+Player minigame quality can improve adaptation but cannot bypass potential or recovery. 
+
+No official stat farming from repeated exhibitions or duplicate/restarted online transactions. Local offline saves remain under the player’s control and never import competitive state into official online universes. 
+
+Every update records cause, before/after values, model version and simulation timestamp. 
+
+5. Real-time boxing combat 
+
+5.1 Core mechanics 
+
+Combat operates at a fixed simulation step with authoritative state: ring coordinates, stance, center of mass, guard, hands, movement, punch phase, stamina, local damage, referee state and score. Inputs express intended actions; validated animation/contact events produce outcomes. Punches: jab, cross, lead/rear hook, lead/rear uppercut, body/head variants and combinations. Defense: high/low guard, parry, slip, roll, pull, clinch, footwork and distance management. 
+
+5.2 Punch resolution pipeline 
+
+Capture timestamped input command with sequence and selected target. 
+
+Check legal action, current animation state, stamina, stance and movement constraints. 
+
+Resolve movement, hit volume and defensive collision at authoritative tick. 
+
+Compute contact quality from geometry, timing, velocity class, balance, guard and target exposure. 
+
+Resolve impact from fighter ability, punch type, technique, conditioning and contact quality. 
+
+Accumulate local damage, stun, balance and knockdown probability; trigger legal referee checks. 
+
+Publish round telemetry, scoreable events and replicated animation cues. 
+
+5.3 Combat systems 
+
+System 
+
+Production requirement 
+
+Locomotion 
+
+8-way footwork, pivots, cut-off angles, ropes/corners, stance changes 
+
+Stamina 
+
+Aerobic reserve, burst expenditure, between-round recovery, output degradation 
+
+Damage 
+
+Head/body regional damage, short-term stun, cumulative burden and injury risk 
+
+Defense 
+
+Block efficacy by angle, parry windows, evasion geometry, guard recovery 
+
+Clinch 
+
+Contextual initiation, break timing, referee intervention 
+
+Judging 
+
+Round-based 10-point must default; configurable amateur/event variants 
+
+Referee 
+
+Knockdowns, counts, fouls, warnings, cuts and stoppage checks 
+
+Replay 
+
+Versioned authoritative combat event/state trace plus compatible audiovisual replay; exact cross-build physics resimulation is not assumed 
+
+5.4 Skill versus fighter ability 
+
+Player skill controls decision, timing, distance, shot selection and defensive execution; fighter stats bound feasible speed, sustained output, punch effect and technical reliability. No button mash damage multiplication. Online normalized ranked and persistent universe are distinct rulesets with clear pre-fight disclosure of stat advantages. 
+
+5.5 Headless versus playable fights 
+
+Use one FightRules and outcome vocabulary. Headless simulation aggregates tactical exchanges without frame-level animation, but must calibrate to playable fight outcome distributions. Do not reuse a Monte Carlo forecast as if it were a real-time combat engine. Compare KO rate, round outcomes, scoring and stamina trends across both execution paths. 
+
+6. AI fighters and autonomous world 
+
+6.1 In-ring AI 
+
+Three-layer architecture: strategic game plan (style, risk, target, pace), tactical policy (read opponent, feint, counter, pressure, escape) and motor execution (legal inputs under the same fighter constraints). AI has perception delays and incomplete information. Difficulty improves decisions and consistency, not hidden health/damage buffs or superhuman reactions. 
+
+6.2 Behavioral diversity 
+
+Style profiles include out-boxer, pressure fighter, counterpuncher, boxer-puncher, swarmer and slugger; blend via continuous preference weights. Traits: aggression, patience, discipline, courage, adaptability, risk tolerance, coachability, loyalty, confidence and motivation. Behavior evolves with coaching, opponents, success, injury and aging. 
+
+6.3 Agent ecology 
+
+Autonomous promoters recruit and negotiate; managers select opportunities; trainers shape camps; sanctioning bodies enforce deadlines; fighters evaluate contracts, purses, title opportunity, opponent risk and career goals. Avoid omniscient agents: each uses an information set and bounded utility model. AI scheduling must avoid double booking and exploit loops. 
+
+7. Training minigames and career progression 
+
+Activity 
+
+Player interaction 
+
+Primary effects 
+
+Heavy bag 
+
+Timing, balance, combination mechanics 
+
+Power technique, finishing readiness, fatigue 
+
+Focus mitts 
+
+Read cues, precision, combinations 
+
+Technical consistency, ring IQ, accuracy 
+
+Slip rope / defense 
+
+Head movement, guard, counters 
+
+Defense, tactical readiness 
+
+Speed bag 
+
+Rhythm and timing 
+
+Speed execution, coordination 
+
+Conditioning 
+
+Pacing and interval management 
+
+Stamina readiness, recovery debt 
+
+Film study 
+
+Identify patterns and select plans 
+
+Opponent-specific familiarity 
+
+Controlled sparring 
+
+Playable boxing with intensity limits 
+
+Transfer learning, risk and fatigue 
+
+Minigames reuse the real combat controls and mechanics. Coach-delegated training must remain competitive: manual sessions give bounded quality variance, not unlimited progression. Camp planning allocates training, recovery and tactical preparation across 4–12 weeks. Overtraining increases fatigue and injury probability. Repeated impact is never a direct path to higher damage resistance. 
+
+8. Rankings, sanctioning and championships 
+
+8.1 Competitive taxonomy 
+
+Separate (a) online player skill rating, (b) fighter competitive ranking, and (c) sanctioning-body title eligibility. They answer different questions and must not be conflated. Ranking is division-, domain-, universe-, organization- and date-specific. Official fights affect canonical career records; exhibitions do not. 
+
+8.2 Geographic and organizational belts 
+
+Configurable ladder: local/city, state or province, multi-state regional, national, continental/intercontinental, world, unified and undisputed. Geographic eligibility is defined by fighter residency/citizenship/registration policy per organization; exceptions are explicit. State titles are not automatic prerequisites for world rankings. Each sanctioning body has its own eligible pool, rankings, mandatory rules and title lineage. 
+
+8.3 Ranking method 
+
+Proposed transparent composite: quality-adjusted recent results, opponent strength, activity, division eligibility and championship status, with configurable recency decay and inactivity rules. Keep ranking_score distinct from skill rating and public scouting estimates. Update after certified bouts or scheduled batch, record model version, input fight IDs and explanation. Never use future career data to rank a historical date. 
+
+8.4 Championship lifecycle 
+
+Publish contenders and champion with ranking snapshot. 
+
+Identify voluntary defenses, mandatory challenger and mandatory deadline. 
+
+Approve bout if eligibility, division weight, suspension and contract constraints pass. 
+
+Reserve belt and sanctioning authority transactionally; prevent double title booking. 
+
+Certify result and update title lineage, champion, rankings and mandatory queue. 
+
+Vacate/strip on retirement, division exit, missed deadline, failed weight or disciplinary rule; record reason. 
+
+8.5 Special cases 
+
+Support draws, technical decisions, no-contests, disputed outcomes, failed weight, interim champions, eliminators, rematches, title unification and split organizational belts. Undisputed is derived from possession of all configured major world belts in the same division at the same timestamp. Belt naming and likenesses require licensing or fictional equivalents. 
+
+9. Promotion and economy 
+
+Promotion is a supporting layer: stable slots, contracts, coaches, facilities, matchmaking proposals, purses, reputation, event economics and sponsor opportunities. Player can automate most decisions. Fighter motivation considers purse, career trajectory, opposition, championship access, trainer fit, promotional reputation and personal goals. Contracts have term, fights owed, purse share, options and termination; do not model fighter as permanent property. AI competitors can sign prospects and challenge the player. Economy must avoid pay-to-win boosts and inflation exploits. 
+
+10. Multiplayer and competitive integrity 
+
+10.1 Official authority 
+
+Dedicated authoritative match servers own combat truth. Client sends validated inputs, predicts locally for responsiveness and reconciles to server. Backend owns scheduling, eligibility, result certification and career transactions. Use rate limiting, anti-tamper, input sequence validation, replay-based review and idempotent result processing. 
+
+10.2 Match flow 
+
+Queue by domain, region, latency, skill rating, division and ruleset. 
+
+Reserve eligible fighters; capture immutable pre-fight snapshot and ruleset version. 
+
+Allocate match server and issue scoped join tokens. 
+
+Run bout; log authoritative tick/event trace, disconnects and referee events. 
+
+Sign result envelope and submit once using match_id idempotency key. 
+
+Certify result transactionally; update fighter record, rating and title projections. 
+
+Publish results and expose dispute/appeal workflow. 
+
+10.3 Ranked design 
+
+Ranked traditional gameplay is separate from VR. Within traditional, PC/console crossplay is a future policy decision dependent on measured fairness. Support normalized ranked classes for low-grind entry and a persistent career ruleset with constrained matchmaking. Never let custom offline stats enter official ranked. No gameplay advantage from purchases. 
+
+10.4 Failure modes 
+
+Disconnect policy distinguishes voluntary forfeit, network interruption and server failure; server crash produces void/replayable match rather than fabricated loss. Result certification is idempotent. Title reservation expires safely. All official state changes use optimistic version checks and database transactions. 
+
+11. Technology architecture and deployment 
+
+11.1 Preferred stack 
+
+Layer 
+
+Technology 
+
+Rationale 
+
+Game client 
+
+Unreal Engine 5, C++ core, Blueprints presentation 
+
+Real-time animation, networking, future OpenXR 
+
+Simulation and rules 
+
+Python 3.12+, typed domain packages 
+
+Reuse/refine existing FightVantage mathematical methods 
+
+Public API 
+
+FastAPI + Pydantic 
+
+Existing team familiarity; typed contracts 
+
+Database 
+
+PostgreSQL 16+ / SQLAlchemy / Alembic 
+
+Relational integrity, transactions, rankings and histories 
+
+Offline save 
+
+SQLite + serialized snapshots 
+
+Local single-player, no mandatory service dependency 
+
+Background work 
+
+Python workers; Redis Streams or task queue 
+
+World ticks, ranking refresh, batch AI fights 
+
+Match authority 
+
+Unreal dedicated server, native C++ 
+
+Low-latency frame-level combat authority 
+
+Events 
+
+Postgres outbox initially; Kafka only if scale warrants 
+
+Durable ordered event publishing 
+
+Object storage 
+
+S3-compatible 
+
+Replays, cosmetics, snapshots, audit artifacts 
+
+Observability 
+
+OpenTelemetry, Prometheus/Grafana, structured logs 
+
+Latency, simulation health and incident response 
+
+CI/CD 
+
+GitHub Actions, container images, IaC 
+
+Versioned builds and migration discipline 
+
+11.2 Python boundary 
+
+Python is authoritative for world scheduling, progression, ranking, economy, contracts, headless simulation and certification. Frame-level physics, collision and animation run in Unreal C++ for performance and server authority under network conditions; cross-build physics determinism is not assumed. Expose pure, versioned rule functions and schema contracts; do not call Python on every rendered frame. Where numerical logic must match, port fixed-point or reference implementations with cross-language golden-vector tests. 
+
+11.3 Deployment topology 
+
+Client ↔ API gateway/FastAPI ↔ PostgreSQL; queue ↔ world workers/headless bout workers; matchmaking service ↔ Unreal dedicated match servers; replay and telemetry ↔ object storage. Redis handles transient queues/presence only; PostgreSQL is source of truth. For offline play, embedded SQLite and local Python-equivalent packaged simulation runtime must be evaluated: shipping a separate Python interpreter is possible but adds distribution/patching complexity. Alternative: port deterministic world rules into a compiled shared library while keeping Python reference tests. 
+
+11.4 Monorepo proposal 
+
+apps/game-unreal; apps/backend-api; apps/world-worker; apps/admin; packages/domain-python; packages/simulation-python; packages/ranking-python; packages/contracts; packages/combat-reference; infra/; tests/golden/; docs/adr/. FightVantage reusable methods are copied, licensed and refactored into independent packages, never runtime-called from FightVantage. 
+
+12. Data model, SQL and event contracts 
+
+12.1 Core entities 
+
+Entity 
+
+Key fields / constraints 
+
+competition_domain 
+
+id, type(TRADITIONAL/VR), rules_version 
+
+universe 
+
+id, domain_id, mode, clock, seed, policy_version 
+
+fighter 
+
+id, domain_id, universe_id, identity, body, stance, division, status, version 
+
+fighter_state 
+
+fighter_id, effective_time, ability_json, readiness_json, damage_json, model_version 
+
+promotion / contract 
+
+domain_id, universe_id, fighter_id, dates, rights, version 
+
+fight 
+
+id, domain_id, universe_id, rules_version, state, scheduled_at, certified_at 
+
+fight_participant 
+
+fight_id, fighter_id, corner, pre_fight_state_version 
+
+round_event / scorecard 
+
+fight_id, round, actor, judge, event_type, value 
+
+ranking_snapshot 
+
+domain_id, universe_id, org_id, division_id, as_of, model_version 
+
+title / title_reign 
+
+organization, division, geographic scope, holder, lineage, dates 
+
+domain_event / outbox 
+
+event_id, aggregate, version, timestamp, payload, published_at 
+
+12.2 Representative SQL DDL 
+
+CREATE TABLE competition_domain (id uuid PRIMARY KEY, code text UNIQUE NOT NULL); 
+
+CREATE TABLE universe (id uuid PRIMARY KEY, domain_id uuid NOT NULL REFERENCES competition_domain(id), mode text NOT NULL, world_time bigint NOT NULL, rules_version text NOT NULL); 
+
+CREATE TABLE fighter (id uuid PRIMARY KEY, domain_id uuid NOT NULL REFERENCES competition_domain(id), universe_id uuid NOT NULL REFERENCES universe(id), name text NOT NULL, version bigint NOT NULL DEFAULT 0); 
+
+CREATE TABLE fight (id uuid PRIMARY KEY, domain_id uuid NOT NULL REFERENCES competition_domain(id), universe_id uuid NOT NULL REFERENCES universe(id), status text NOT NULL, rules_version text NOT NULL, certified_at timestamptz); 
+
+CREATE TABLE domain_event (event_id uuid PRIMARY KEY, domain_id uuid NOT NULL, universe_id uuid NOT NULL, aggregate_id uuid NOT NULL, aggregate_version bigint NOT NULL, event_type text NOT NULL, payload jsonb NOT NULL, UNIQUE (aggregate_id, aggregate_version)); 
+
+Production DDL must enforce domain/universe consistency with composite foreign keys or database triggers, not merely application checks. Add unique active title-holder constraints, fighter schedule exclusion rules, partial indexes for active contracts, and partitioning only after profiling. 
+
+12.3 Event envelope 
+
+Every official event: event_id, event_type, schema_version, domain_id, universe_id, aggregate_id, aggregate_version, world_time, occurred_at, causation_id, correlation_id, rules_version, actor_type, actor_id, payload, payload_hash. Replay records include random_seed, deterministic_engine_version, pre_fight_state_hash, authoritative_result_hash and optional binary input trace. 
+
+12.4 API examples 
+
+POST /v1/universes; POST /v1/fighters; POST /v1/camps/{id}/sessions; POST /v1/fights/proposals; POST /v1/matchmaking/queue; GET /v1/rankings?division=&organization=&as_of=; GET /v1/titles/{id}/lineage; POST /internal/matches/{id}/certify. Official mutations require idempotency keys, auth scope and optimistic versions. 
+
+13. FightVantage component reuse assessment 
+
+Repository named in supplied design (inspection claim not independently revalidated here): OnyxByte/fightvantage-platform, legacy-riff/backend/app/libs and monte_carlo_v2 API. These are code-level reuse candidates, NOT runtime dependencies. Presence in repository does not prove current production deployment, correctness, performance or calibration. Copy/refactor with provenance, licensing review, tests and versioned ownership. 
+
+Existing module 
+
+Reuse decision 
+
+Required refinement 
+
+fighter_state_models.py 
+
+HIGH — typed state and observation schemas 
+
+Split true ability, observed estimate, readiness, injuries 
+
+fighter_state_constants.py 
+
+HIGH — attributes and tuning registry 
+
+Remove inference-only outcome-to-power mapping from generative path 
+
+fighter_state_update_engine.py 
+
+SELECTIVE — pure delta math, clamping, audit 
+
+Replace result-driven ability inflation with causal training adaptation 
+
+fighter_state_smoothing.py 
+
+HIGH — EWMA utilities 
+
+Use for scouting estimates or form; not automatic permanent talent smoothing 
+
+fighter_state_decay_engine.py 
+
+SELECTIVE — exponential decay pattern 
+
+Separate ring rust from permanent skill loss; do not always regress toward 0.5 
+
+fighter_state_age_engine.py 
+
+HIGH — continuous age curves, damage interaction 
+
+Calibrate game populations and cohort curves; remove result-as-cause bias 
+
+fighter_state_observations.py 
+
+SELECTIVE — event extraction patterns 
+
+Replace real-world scraped fight records with game event adapters 
+
+fighter_graph_state_queries.py 
+
+SELECTIVE — opponent/context model 
+
+Eliminate future-data leakage; as-of historical snapshots only 
+
+fighter_comparison_models.py 
+
+HIGH — derived display/scouting metrics 
+
+Do not treat derived ratings as primary causal stats 
+
+fighter_state_service.py 
+
+SELECTIVE — orchestration and audit 
+
+Replace Supabase coupling with repository interfaces and domain events 
+
+monte_carlo_engine.py 
+
+HIGH for headless prototype / forecast 
+
+Seeded RNG, deterministic replay, calibration against real-time bouts 
+
+apis/monte_carlo_v2/__init__.py 
+
+LOW for core; useful API schema reference 
+
+Remove user entitlements, Supabase fetch and web API coupling 
+
+tbrb_rankings_job.py 
+
+LOW direct reuse 
+
+Only patterns for ranking snapshots; no external scraping in fictional world 
+
+13.1 Supplied code-level findings — independent verification pending 
+
+FSE defines ten normalized attributes; baseline 0.50 and attribute-specific decay/smoothing constants. 
+
+Smoothing uses EWMA: alpha × raw_new + (1−alpha) × previous snapshot; activity alpha is notably high (0.95). 
+
+Age engine is side-effect free; provides phase labels, age modifiers, age–damage interactions and late-career erosion. 
+
+Monte Carlo engine is round-by-round and path dependent, modeling stamina drain, cumulative damage, knockdowns, momentum, scorecards and stoppage probabilities. 
+
+Monte Carlo API loads FSE snapshots and comparison metrics from Supabase; the engine itself is the stronger reuse target. 
+
+Historical opponent context requires an as-of review: current boxer_analytics values may leak future knowledge into historical rebuilds. 
+
+13.2 Required reuse extraction plan 
+
+Freeze source commit and inventory module licenses, dependencies, public functions and tests. 
+
+Extract pure math and typed data contracts into packages/final_bell_sim; remove database imports. 
+
+Create golden-vector tests for smoothing, age curves, clamping, Monte Carlo distributions and replay. 
+
+Separate causal fighter state from inferred/scouted state; design migration adapter. 
+
+Build seeded headless simulator and validate against instrumented Unreal combat. 
+
+Implement ranking service with historical as-of inputs and domain-scoped SQL projections. 
+
+Run statistical calibration and load tests; adopt only methods meeting acceptance thresholds. 
+
+13.3 Reference source paths 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_models.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_constants.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_update_engine.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_smoothing.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_decay_engine.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_age_engine.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_observations.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_graph_state_queries.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_state_service.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/fighter_comparison_models.py 
+
+https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/libs/monte_carlo_engine.py 
+
+API source: https://github.com/OnyxByte/fightvantage-platform/blob/main/legacy-riff/backend/app/apis/monte_carlo_v2/__init__.py 
+
+14. VR expansion architecture 
+
+VR is a separate competition domain with its own world population, records, ratings, titles, rankings, official servers and leaderboards. It reuses domain schemas, career simulation, ranking logic and combat outcomes, but uses distinct motion input, first-person presentation, comfort, safety and tuning. No official VR-versus-controller fights and no cross-domain transfer of fighter statistics or achievements. 
+
+OpenXR-based input adapter validates punch path, velocity, guard and tracked reach. Prevent wrist-flick exploits; calibrate room boundary, standing/seated options, handedness and reach; support fatigue and comfort accessibility. Target platform-specific rendering and refresh budgets after headset selection. Shared account/cosmetic identity is permissible only where competitive-neutral. 
+
+15. Security, operations and analytics 
+
+Authentication: OIDC; scoped match tokens; separate local offline saves from official authority. 
+
+Data privacy: minimize PII; consent and deletion workflows for face scans and voice; age-appropriate moderation. 
+
+Abuse: profanity/identity moderation, reporting, match manipulation detection and anti-cheat telemetry. 
+
+Operational SLO proposals: API p95 under 250 ms for read endpoints; match input latency budget established via prototype; certification under 10 seconds after match end. 
+
+Observability: per-match tick overruns, packet loss, reconciliation rate, desync hashes, worker backlog, event lag, rankings freshness, crash-free sessions. 
+
+Disaster recovery: Postgres PITR, daily backup restore drill, immutable result logs, snapshot integrity checks. 
+
+Content versioning: ruleset, fighter model, combat engine, AI policy and schema versions pinned to official match. 
+
+16. Production roadmap and two-person milestone reference 
+
+Phase 
+
+Indicative duration 
+
+Exit gate 
+
+0 — Preproduction 
+
+8–12 weeks 
+
+Combat feel prototype, architecture ADRs, 2 styles, 1 ring, basic AI, seeded bout 
+
+1 — Vertical slice 
+
+4–6 months 
+
+Polished playable fight, training drill, scoring, AI rival, basic career 
+
+2 — Single-player alpha 
+
+4–6 months 
+
+Persistent offline world, creation, training, ranking, title lineage, saves 
+
+3 — Online alpha 
+
+4–6 months 
+
+Authoritative match, matchmaking, replay, anti-cheat, certification 
+
+4 — Content/beta 
+
+4–8 months 
+
+Fighter variety, balance, accessibility, telemetry, load testing 
+
+5 — VR R&D 
+
+Parallel spike after combat stabilizes 
+
+Input feasibility, comfort, tracking and performance evidence 
+
+Durations are rough planning ranges, not a committed release schedule. Dependencies, staffing, platform certification and asset production can materially change estimates. 
+
+16.1 Two-person responsibilities and outsourced asset decisions 
+
+Game director / producer; Unreal combat engineers; gameplay animator/technical animator; AI engineer; Python simulation engineer; backend/Postgres engineer; game designer/economy designer; UI/UX designer; technical artist; QA automation and network/security specialists. Early prototypes may combine roles, but production requires sustained animation and combat QA capacity. 
+
+16.2 Definition of done per feature 
+
+Approved spec + instrumented prototype + unit/integration tests + playtest metrics + accessibility check + performance budget + telemetry + documentation + rollback strategy. A feature is not complete merely because it works in a local editor session. 
+
+17. Testing, balancing and acceptance criteria 
+
+17.1 Automated tests 
+
+Deterministic golden tests: same seed, ruleset and pre-fight state reproduce identical headless outcomes. 
+
+Property tests: attributes stay bounded; no negative stamina; no double-booked official fighters; no dual title holder for exclusive belt. 
+
+Domain isolation: all writes reject mismatched competition_domain_id, including nested foreign keys. 
+
+Replay and idempotency: duplicate match result cannot duplicate records, money, belts or rating changes. 
+
+Temporal integrity: rankings and scouting queries at time T cannot access records after T. 
+
+Cross-language parity: Python reference vs C++ numerical logic within documented tolerances. 
+
+Save compatibility: old offline worlds migrate safely or fail with explicit recovery path. 
+
+17.2 Playtest and statistical validation 
+
+Track hit quality, jab utility, defensive counter success, ring-cutting efficacy, punch spam, stamina curves, KO/TKO distributions, scorecard agreement, style diversity and player retention. Evaluate novice versus expert skill separation without allowing statistical attribute gaps to overwhelm skill. Calibrate AI headless outcomes against instrumented playable matches by matched cohorts. 
+
+17.3 Initial measurable gates 
+
+Gate 
+
+Proposed threshold / test 
+
+Combat performance 
+
+Stable target frame rate on selected minimum PC spec; no gameplay-breaking tick overruns 
+
+Determinism 
+
+100% reproducible headless tests with pinned seeds/versions 
+
+World integrity 
+
+Zero cross-domain certified events in integration suite 
+
+Certification 
+
+Exactly-once visible result under retry and crash injection 
+
+Single-player 
+
+Playable offline career through multiple generations; successful save/reload 
+
+AI credibility 
+
+No unearned stat boosts; distinct styles identified in blind playtests 
+
+Rankings 
+
+Historical as-of replay yields identical published order 
+
+Balance 
+
+No dominant punch exploit or training farm in adversarial test sessions 
+
+18. Risks, open decisions and glossary 
+
+18.1 Top risks 
+
+Risk 
+
+Mitigation 
+
+Real-time combat feels weak 
+
+Prototype combat before world-scale investment; repeated boxer-informed playtests 
+
+Python/C++ numerical drift 
+
+Reference models, fixed-point where necessary, golden vectors and seeded test corpus 
+
+Simulation scale exceeds budget 
+
+Tiered fidelity, scheduled batching, event-driven updates, profile before distributing 
+
+FSE causal misuse 
+
+Separate observation/inference from underlying true ability; causal training rules 
+
+Online cheating and desync 
+
+Server authority, validated inputs, replay audit and transactional certification 
+
+Licensing/IP 
+
+Use fictional organizations and fighters unless rights are secured 
+
+VR physical safety 
+
+Separate domain, comfort defaults, boundary checks and headset-specific testing 
+
+Content production cost 
+
+Modular animations, scoped roster and vertical-slice gates 
+
+18.2 Decisions to resolve in preproduction 
+
+Exact traditional control scheme and camera(s), including accessibility options. 
+
+Launch platform order, minimum hardware targets and 60/120 Hz combat simulation budget. 
+
+Ranked normalized fighter class rules and persistent career matchmaking boundaries. 
+
+Official online universe time ratio, season duration and retirement cadence. 
+
+State/regional/national geography policy and sanctioning-body catalog. 
+
+Real-world fighter/organization licensing versus wholly fictional IP. 
+
+Offline world generator scale, save portability and modding policy. 
+
+Monetization: cosmetics/content only; never competitive attribute purchases. 
+
+Voice/chat moderation and age rating targets. 
+
+VR target hardware, locomotion design and input calibration standard. 
+
+18.3 Glossary 
+
+Domain: isolated competitive ecosystem (Traditional or VR). Universe: time-bound or persistent world instance within a domain. Official bout: certified career-affecting fight. Exhibition: non-record contest. True ability: causal simulated fighter capability. Scouting estimate: imperfect inferred capability. Readiness: temporary preparation and fatigue. Title lineage: chronological championship ownership. Ruleset version: immutable bundle of combat and sanctioning logic. Headless bout: non-rendered AI simulation. Golden vector: known input/output used to verify implementation parity. 
+
+Architecture decision register — initial approved positions 
+
+ADR 
+
+Decision 
+
+ADR-001 
+
+Gameplay-first competitive boxing; promotion secondary 
+
+ADR-002 
+
+Complete single-player offline experience 
+
+ADR-003 
+
+Traditional and VR independent competitive domains 
+
+ADR-004 
+
+Reuse/refine FightVantage methods; no runtime FightVantage integration 
+
+ADR-005 
+
+Python/PostgreSQL for world systems; Unreal C++ for real-time combat 
+
+ADR-006 
+
+Separate true fighter ability from inferred scouting state 
+
+ADR-007 
+
+Server-authoritative online fights; versioned certified results 
+
+ADR-008 
+
+Persistent world with seasons for competitive ladders, not mandatory world resets 
+
+PART II — TWO-PERSON EXECUTION REFERENCE 
+
+This execution annex supersedes staffing assumptions in Section 16 while retaining the product-wide architecture in Part I. It is organized as buildable, independently testable increments. All durations are planning ranges, not commitments; effort depends heavily on animation quality, asset licensing and learning curve. 
+
+19. Production control system 
+
+19.1 Non-negotiable rules 
+
+Two developers share design, code, integration, QA and release with one named owner and one reviewer per task; use third-party art, animation, audio and optional contractors only for bounded deliverables. 
+
+Every work item has ID, one named owner and one reviewer, prerequisite IDs, scope, output artifact, automated check, manual playtest, and exit evidence. 
+
+Keep a green build on main; use short-lived feature branches, tagged playable builds, issue tracking and automated tests. 
+
+Freeze contracts before implementing consumers; document versioned JSON/Pydantic schemas, Unreal structures and SQL migrations. 
+
+Prototype highest-risk gameplay assumptions before building world infrastructure; do not optimize speculative features. 
+
+Track decision records (ADRs), performance baselines, license provenance, known limitations and deferred scope. 
+
+19.2 Work item template 
+
+Field 
+
+Required contents 
+
+ID / priority 
+
+e.g., CMB-03; P0/P1/P2; release phase 
+
+Prerequisites 
+
+IDs and API/schema contracts that must exist 
+
+Implementation 
+
+Concrete classes, assets, migrations and tests 
+
+Acceptance 
+
+Observable pass/fail behavior and performance limits 
+
+Evidence 
+
+Test run, video capture, screenshot, replay seed, profiler trace 
+
+Exit / rollback 
+
+Merge/tag condition; fallback when acceptance fails 
+
+19.3 Definition of ready and definition of done 
+
+Ready: input/output contract specified; prerequisites implemented; test fixtures available; art dependencies identified; expected performance and failure cases defined. Done: unit and integration tests green; acceptance demonstration recorded; game launches without manual repair; documentation and changelog updated; no unowned blocker; release tag or milestone commit created. 
+
+19.4 Two-person capacity and critical path 
+
+Estimate work in focused developer-days, not studio person-weeks. Plan no more than 60–70% of available time as feature implementation; reserve the remainder for learning Unreal, debugging, integration, assets and QA. Critical path: network-aware boxing controls → credible contact/hit reactions → two-client authority proof → full bout → bounded career persistence → headless/world depth and online operations. VR is a separate late-stage branch. 
+
+20. Milestone dependency and release gates 
+
+Gate 
+
+Outcome 
+
+Blocking exit condition 
+
+P0 
+
+Foundation 
+
+Project opens from clean checkout; reproducible builds, input map, CI and coding standards. 
+
+P1 
+
+Combat proof 
+
+Two fighters can complete a responsive three-round offline bout. 
+
+P2 
+
+Single-player vertical slice 
+
+Create a boxer, train, fight AI, see result and save/load career. 
+
+P3 
+
+Living universe 
+
+Autonomous world advances, rankings and titles update without player intervention. 
+
+P4 
+
+Complete offline product 
+
+Career loops, presentation, accessibility, recovery and balance meet beta gate. 
+
+P5 
+
+Online competitive beta 
+
+Authoritative PvP with validated results and isolated competitive state. 
+
+P6 
+
+Traditional release 
+
+Stable install, telemetry, content, legal compliance and support readiness. 
+
+P7 
+
+VR expansion 
+
+Separate domain with motion controls, safety and performance certification. 
+
+Gates are sequential for release, but non-critical assets and world-simulation tests can progress in parallel. P5 is not required to validate the offline game; release strategy may ship offline-first if multiplayer quality is not ready. 
+
+21. System-by-system build cards 
+
+21.7 FND — Toolchain, repository and builds 
+
+Phase: P0. Deliverables: Unreal project, Git LFS policy, Python package manager, pytest, SQL migration tooling, CI, crash-symbol storage. 
+
+Exit test: Clean Windows checkout builds and runs; Python tests and SQL migration up/down pass; asset licenses recorded. 
+
+Primary risk / rework prevention: Version pinning, broken plugins, giant binary commits. 
+
+21.2 ARC — Shared architecture and contracts 
+
+Phase: P0. Deliverables: CombatIntent, FighterTrueState, FighterReadiness, FightResult, WorldEvent, schema versions, domain IDs, ADRs. 
+
+Exit test: Contract tests serialize/deserialize between Python JSON and Unreal; unknown versions rejected safely. 
+
+Primary risk / rework prevention: Python runtime inside Unreal frame loop; mismatched schemas. 
+
+21.9 INP — Controller input and accessibility 
+
+Phase: P1. Deliverables: Gamepad bindings, remapping, dead zones, input buffering, feedback, tutorial prompts. 
+
+Exit test: All punches, guard, slip, movement and pause reachable on gamepad; remaps persist; no stuck inputs. 
+
+Primary risk / rework prevention: Input complexity, latency, left-handed support. 
+
+21.10 MOV — Footwork, spacing and ring physics 
+
+Phase: P1. Deliverables: Locomotion, pivots, stance, collision, rope/corner constraints, clinch placeholder. 
+
+Exit test: No ring escapes or body interpenetration; movement consistent at variable frame rates. 
+
+Primary risk / rework prevention: Root motion and hitbox drift. 
+
+21.4 ATK — Punch and defense pipeline 
+
+Phase: P1. Deliverables: Jab/cross/hooks/uppercuts, combo windows, range/angle, guard, slips, blocks, counters, animation notifies. 
+
+Exit test: Contact resolution matches visible impact; misses do not register; reproducible test scenarios. 
+
+Primary risk / rework prevention: Animation quality and misleading collision. 
+
+21.13 PHY — Stamina, damage, knockdown and stoppage 
+
+Phase: P1. Deliverables: Energy costs, fatigue recovery, stagger, knockdown, counts, referee stoppage and KO/TKO. 
+
+Exit test: No negative stamina; finite knockdown recovery; stoppage ends bout exactly once. 
+
+Primary risk / rework prevention: Unfair damage scaling and exploits. 
+
+21.16 REF — Rules, judges and bout state 
+
+Phase: P1. Deliverables: Rounds, clock, 10-point must, fouls, knockdowns, decisions, draws, referee transitions. 
+
+Exit test: Golden scorecards for scripted fights; all endings create one valid FightResult. 
+
+Primary risk / rework prevention: Ambiguous rule variants. 
+
+21.1 AI — Tactical AI and difficulty 
+
+Phase: P1-P2. Deliverables: Finite-state/utility planner, range preferences, styles, counters, pacing, adaptive tactics. 
+
+Exit test: AI completes bout without stalls; style differences visible; reaction timing bounded. 
+
+Primary risk / rework prevention: Cheating AI and repetitive behavior. 
+
+21.6 CHR — Fighter creator and appearance 
+
+Phase: P2. Deliverables: Names, body measurements, stance, weight, cosmetic presets, stats budget, appearance asset pipeline. 
+
+Exit test: Created fighter appears correctly in fight and survives save/load; invalid body configurations blocked. 
+
+Primary risk / rework prevention: Asset pipeline and licensing. 
+
+21.21 TRN — Training and preparation 
+
+Phase: P2. Deliverables: Bag, mitts, slip drills, conditioning, coach delegation, readiness and injury tradeoffs. 
+
+Exit test: Training affects specified attributes with caps; no training bypasses combat rules. 
+
+Primary risk / rework prevention: Grind and pay-to-win incentives. 
+
+21.8 FSE — FightVantage algorithm extraction 
+
+Phase: P2-P3. Deliverables: Pure Python FSE package, adapter from FightResult, aging, smoothing, estimation confidence, fixtures. 
+
+Exit test: No Supabase import in core; seeded deterministic tests; true ability not increased solely by winning. 
+
+Primary risk / rework prevention: Inference/causation confusion. 
+
+21.19 SIM — Headless bout simulator 
+
+Phase: P3. Deliverables: Python round-based event simulator with shared rule constants and calibration harness. 
+
+Exit test: Seed replay identical; plausible results across 10k simulated bouts; no future-data leakage. 
+
+Primary risk / rework prevention: Different outcome distribution from playable combat. 
+
+21.24 WRL — World clock and autonomous careers 
+
+Phase: P3. Deliverables: Local time scheduler, NPC debuts, training, bookings, fights, layoffs, retirement and event log. 
+
+Exit test: Advance 10 years headlessly; no double aging or duplicate fights; bounded execution time. 
+
+Primary risk / rework prevention: Time semantics and unbounded jobs. 
+
+21.17 RKG — Rankings and eligibility 
+
+Phase: P3. Deliverables: Separate skill rating from sanctioning merit, inactivity, opponent quality, geography, contender selection. 
+
+Exit test: Fixture-based ordering, ties, decay and ineligibility deterministic; no cross-domain ranks. 
+
+Primary risk / rework prevention: Circular scoring and bias. 
+
+21.22 TTL — Titles and sanctioning 
+
+Phase: P3. Deliverables: State/regional/national/world belts, vacancies, mandatories, unifications, lineage, appeals. 
+
+Exit test: No simultaneous conflicting holder; lineage preserved; title change atomic. 
+
+Primary risk / rework prevention: Geographic edge cases. 
+
+21.14 PRM — Promoters, contracts and economy 
+
+Phase: P3-P4. Deliverables: NPC promoters, offers, fighter agency, matchmaking, finances, purses, venue constraints. 
+
+Exit test: AI can schedule viable cards; fighters can decline; no impossible money or contract state. 
+
+Primary risk / rework prevention: Management eclipsing boxing. 
+
+21.5 CAR — Career UI and onboarding 
+
+Phase: P2-P4. Deliverables: Career hub, fight calendar, training, records, news, title tree, guided first session. 
+
+Exit test: New player reaches first fight quickly; career decisions have clear feedback. 
+
+Primary risk / rework prevention: Menu bloat. 
+
+21.18 SAV — Persistence, migrations and recovery 
+
+Phase: P2-P4. Deliverables: SQLite local saves, atomic checkpoints, backup, versioned migrations, crash recovery, optional cloud sync. 
+
+Exit test: Forced crash cannot corrupt last good save; old fixtures migrate; no cross-universe writes. 
+
+Primary risk / rework prevention: Data loss and migration complexity. 
+
+21.11 NET — Networking and server authority 
+
+Phase: P1 networking foundation, P4 online operations under the merged roadmap. Deliverables: Unreal dedicated match server, server-validated input, replication, disconnect policy, anti-cheat. 
+
+Exit test: Two remote clients complete bout under tested latency; forged results rejected. 
+
+Primary risk / rework prevention: Latency, server expense and cheats. 
+
+21.20 SOC — Online matchmaking and identity 
+
+Phase: P5. Deliverables: Account auth, queue, skill matching, season leaderboard, bans and reports, reconnect policy. 
+
+Exit test: Domain-scoped rankings; match result idempotent; unauthorized endpoints denied. 
+
+Primary risk / rework prevention: Abuse and player liquidity. 
+
+21.12 OPS — Telemetry, security and operations 
+
+Phase: P4-P6. Deliverables: Structured logs, crash reports, backup restore, health metrics, cost caps, privacy policy. 
+
+Exit test: Recovery drill succeeds; alerts tested; no secrets in client builds. 
+
+Primary risk / rework prevention: Operational overhead. 
+
+21.3 ART — Visual/audio presentation 
+
+Phase: P1-P6. Deliverables: Licensed animation library, hit effects, announcer, crowd, venue variants, camera and UI audio. 
+
+Exit test: Legible punch feedback and 60-fps target on reference PC; rights documented. 
+
+Primary risk / rework prevention: High production cost. 
+
+21.15 QA — Testing, accessibility and release 
+
+Phase: P0-P6. Deliverables: Automated regression, controller QA, color/subtitle options, performance budgets, store assets, installer. 
+
+Exit test: Clean install/uninstall, save migration, offline play and crash reporting verified. 
+
+Primary risk / rework prevention: Late compatibility failures. 
+
+21.23 VR — Separate VR domain 
+
+Phase: P7. Deliverables: OpenXR motion recognition, IK, calibration, comfort, safety, standalone performance, domain isolation. 
+
+Exit test: VR career never enters traditional rankings; motion exploits bounded; comfort tests pass. 
+
+Primary risk / rework prevention: Physical safety and performance. 
+
+22. Detailed milestone backlog and order 
+
+ID 
+
+Phase 
+
+Deliverable 
+
+Systems 
+
+Proof of completion 
+
+M00 
+
+P0 
+
+Create UE project, controller template, project settings and build scripts 
+
+FND 
+
+Launch packaged dev build on clean machine 
+
+M01 
+
+P0 
+
+Define schema contracts and domain isolation invariants 
+
+ARC 
+
+Contract and invalid-domain tests pass 
+
+M02 
+
+P1 
+
+Implement locomotion, camera, ring bounds and two placeholder boxers 
+
+MOV 
+
+10-minute spar session without movement faults 
+
+M03 
+
+P1 
+
+Implement basic jab/cross and guard with visible hit reactions 
+
+ATK 
+
+Hits/misses agree with collision traces 
+
+M04 
+
+P1 
+
+Add hooks/uppercuts, slip, counter, combos and stamina 
+
+ATK,PHY 
+
+No animation or stamina exploit in scripted suite 
+
+M05 
+
+P1 
+
+Add rounds, knockdowns, stoppage and judges 
+
+REF 
+
+Three-round bout completes and result is reproducible 
+
+M06 
+
+P1 
+
+Implement basic AI styles and test harness 
+
+AI 
+
+AI fights 100 consecutive bouts without soft-lock 
+
+M07 
+
+P2 
+
+Build fighter creation and local save 
+
+CHR,SAV 
+
+Created boxer survives restart and corrupted-save recovery 
+
+M08 
+
+P2 
+
+Build training drills and progression boundary 
+
+TRN 
+
+Caps and readiness behavior pass fixtures 
+
+M09 
+
+P2 
+
+Implement first career loop and onboarding 
+
+CAR 
+
+Create → train → fight → result → next fight 
+
+M10 
+
+P3 
+
+Extract FightVantage pure math into Python package 
+
+FSE 
+
+No service dependencies; golden fixtures pass 
+
+M11 
+
+P3 
+
+Build deterministic headless bouts and calibration 
+
+SIM 
+
+Seed replay and population sanity tests pass 
+
+M12 
+
+P3 
+
+Add world clock, event log, NPC careers 
+
+WRL 
+
+10-year fast-forward invariants pass 
+
+M13 
+
+P3 
+
+Implement ranking and title rule engines 
+
+RKG,TTL 
+
+Eligibility and lineage fixture suite pass 
+
+M14 
+
+P3 
+
+Add NPC promoters, contracts and scheduled cards 
+
+PRM 
+
+Autonomous world generates coherent fight cards 
+
+M15 
+
+P4 
+
+Complete career UX, assets, performance and offline beta 
+
+CAR,ART,QA 
+
+External playtest and performance gate pass 
+
+M16 
+
+P5 
+
+Harden the existing authoritative two-player combat prototype 
+
+NET 
+
+Two clients finish bout with reconciled result 
+
+M17 
+
+P5 
+
+Add identity, matchmaking, seasons and anti-cheat 
+
+SOC,OPS 
+
+Spoofing, duplicate result and disconnect tests pass 
+
+M18 
+
+P6 
+
+Release readiness and store submission 
+
+QA,OPS 
+
+Install, restore, accessibility and compliance gates pass 
+
+M19 
+
+P7 
+
+Prototype VR and establish independent VR world 
+
+VR 
+
+Motion calibration and domain separation pass 
+
+23. Invariants and cross-system acceptance matrix 
+
+Invariant 
+
+Testable rule 
+
+Domain isolation 
+
+Every official query/write filters domain_id and universe_id; DB foreign keys and API authorization enforce scope. 
+
+Single source of fight truth 
+
+FightResult finalized once; idempotency key prevents duplicate record/rank/title updates. 
+
+Determinism 
+
+World RNG seeds and engine versions captured; headless replays produce identical event streams. 
+
+No time paradox 
+
+Canonical world advances only under authoritative scheduler; local saves use their own clock and cannot age canonical fighters. 
+
+Causal attributes 
+
+Underlying talent and readiness drive outcomes; observed FightVantage estimate is a scouting inference, not direct progression reward. 
+
+Event order 
+
+Fight completion → validated result → injury/readiness → record → rankings → title changes → news; transactional or compensating workflow. 
+
+Save durability 
+
+Atomic save and recoverable previous snapshot; migrations forward-only with backups and compatibility fixtures. 
+
+Ranking eligibility 
+
+Weight, region, sanctioning, activity and status checked before challenger selection; audit explanation stored. 
+
+Match integrity 
+
+Dedicated server owns official scoring, health and clock; client sends intent, not authoritative damage. 
+
+Gameplay parity 
+
+Headless and playable bouts share rules and calibration targets, but need not share identical frame-level execution. 
+
+Two-person maintainability 
+
+No microservice added without measured need; feature flag for incomplete systems; tests run locally. 
+
+Asset rights 
+
+Every third-party asset has source, license, usage restrictions, attribution and redistribution record. 
+
+24. Data architecture and contract inventory 
+
+Recommended local-first topology: Unreal client + embedded local save database (SQLite) + separately executed Python world simulator (CLI/localhost process during development). Do not require Python to be bundled inside the real-time Unreal executable for P1. PostgreSQL is the online canonical store starting P5. SQLAlchemy/Alembic migrations or equivalent should be tested against both schemas where feasible; do not assume identical SQL dialect behavior. 
+
+Contract 
+
+Required fields / behavior 
+
+FighterTrueState 
+
+fighter_id, version, physical profile, latent skills, potential, style, long-term wear 
+
+FighterReadiness 
+
+fatigue, conditioning, weight, injury, camp quality, ring rust, last_updated 
+
+CombatIntent 
+
+fighter_id, sequence, timestamp/tick, movement, punch, guard, defensive action 
+
+FightResult 
+
+fight_id, domain_id, universe_id, participants, rounds, winner, method, judges, injuries, replay_hash, engine_version 
+
+WorldEvent 
+
+event_id, domain_id, universe_id, world_tick, event_type, payload_version, payload, causation_id, idempotency_key 
+
+RankingSnapshot 
+
+domain_id, universe_id, sanctioning_body, weight_class, geography, as_of_tick, positions, explanation 
+
+TitleReign 
+
+belt_id, fighter_id, start_event_id, end_event_id, status, defense_count 
+
+SaveManifest 
+
+schema_version, engine_version, checksum, timestamp, last_event_id, backup_path 
+
+24.1 Example domain constraint (PostgreSQL) 
+
+Design all canonical foreign keys with domain/universe scope, not only fighter UUID. Example: UNIQUE(domain_id, universe_id, fighter_id) on fighters; a fight participant foreign key references the scoped fighter identity. For online match results, require UNIQUE(domain_id, universe_id, match_id) and a separate idempotency key. Database row-level security is defense in depth, not a replacement for application authorization. 
+
+24.2 API endpoints to contract-test 
+
+POST /v1/universes/{id}/advance (local/offline only; authenticated local process) → event batch + world tick 
+
+GET /v1/universes/{id}/fighters/{fighter_id} → true-state visibility policy + public scouting view 
+
+POST /v1/fights/{id}/finalize (trusted server only) → immutable FightResult; idempotent 
+
+GET /v1/rankings?domain=&universe=&division=&body= → ranking snapshot + explanation 
+
+POST /v1/matchmaking/queue → authenticated domain-scoped queue ticket 
+
+GET /v1/careers/{id}/timeline → paginated events; private-universe access enforced 
+
+25. FightVantage extraction and verification workplan 
+
+Source module 
+
+Reuse disposition 
+
+Required adaptation / test 
+
+fighter_state_models.py 
+
+Adapt 
+
+Separate latent true skills, estimated scouting traits and temporary readiness 
+
+fighter_state_constants.py 
+
+Reuse selectively 
+
+Version game constants; replace outcome-as-progression mappings 
+
+fighter_state_update_engine.py 
+
+Adapt estimation only 
+
+Never use KO victory as direct skill grant; test historical ordering 
+
+fighter_state_age_engine.py 
+
+Adapt 
+
+Use age/damage effects on potential/physical capacity; tune game population 
+
+fighter_state_decay_engine.py 
+
+Adapt 
+
+Separate rust, conditioning and irreversible aging 
+
+fighter_state_smoothing.py 
+
+Reuse for scouting estimates 
+
+Golden tests for EWMA and update order 
+
+fighter_state_observations.py 
+
+Rewrite adapter 
+
+Consume simulated fight event telemetry, not scraped bout records 
+
+fighter_state_service.py 
+
+Reference architecture 
+
+Replace Supabase orchestration with local repository + event log 
+
+fighter_graph_state_queries.py 
+
+Rewrite 
+
+Use as-of opponent context to prevent future-data leakage 
+
+fighter_comparison_models.py 
+
+Adapt 
+
+Expose scouting and matchup descriptions 
+
+monte_carlo_engine.py 
+
+Prototype / calibrate 
+
+Round-based outcome distributions; no frame-level combat replacement 
+
+monte_carlo_v2/__init__.py 
+
+Do not embed 
+
+API has auth, entitlements and Supabase dependencies 
+
+Source repository: OnyxByte/fightvantage-platform, legacy-riff/backend/app/libs and legacy-riff/backend/app/apis/monte_carlo_v2. The supplied source document reports earlier architectural inspection. This review did not independently inspect or test these modules; exact source commit, licensing, dependencies and production fitness require verification before copying. 
+
+26. Testing strategy and quantitative budgets 
+
+Test layer 
+
+Cadence 
+
+Gate / evidence 
+
+Python unit and property tests 
+
+Every commit 
+
+Pure state transitions, invariant/property tests and deterministic seed fixtures 
+
+SQL migration tests 
+
+Every schema change 
+
+Fresh DB and previous-version upgrade; foreign-key/domain tests 
+
+Unreal automation tests 
+
+Every combat change 
+
+Damage, stamina, bout state and serialization tests 
+
+Playable combat smoke 
+
+Daily during P1 
+
+Controller-to-result run with no blockers 
+
+Headless soak 
+
+P3 onward 
+
+10-year world run; no duplicates, negative balances or orphaned belts 
+
+Statistical balance 
+
+Each tuning release 
+
+Matchup distributions, styles, KO rate, judges, injuries and division variance reviewed 
+
+Network fault injection 
+
+P5 onward 
+
+Latency, packet loss, reconnect, double-submit and malicious client inputs 
+
+Save disaster drill 
+
+Each release candidate 
+
+Crash mid-save, restore previous save, migrate old version 
+
+Performance profiling 
+
+Each milestone 
+
+60 fps target on chosen reference PC; record hardware and percentile frame times 
+
+Accessibility and UX 
+
+P2 onward 
+
+Remap, subtitles, color contrast, reduced effects, onboarding comprehension 
+
+The 60-fps target is an initial product objective, not a verified benchmark. Define a specific minimum hardware profile and frame-time budget after P1. Online tick rates, bandwidth and latency thresholds must be established by measured prototype performance, not arbitrary commitments. 
+
+27. Risk register and decision gates 
+
+Risk 
+
+Early proof / mitigation 
+
+Decision deadline 
+
+Punch animation quality 
+
+Buy/test a small legally licensed animation set; verify transitions and contact 
+
+Before M03 
+
+Combat feel 
+
+Playtest prototype with boxing-literate and casual players 
+
+Before M07 
+
+Two-person scope expansion 
+
+Keep P0–P2 strict; park feature ideas in backlog 
+
+Every gate 
+
+Headless/playable divergence 
+
+Capture comparable telemetry and calibrate distributions 
+
+Before M13 
+
+World economy instability 
+
+Simulate long careers with conservation and constraints 
+
+Before M15 
+
+Online cheating and latency 
+
+Dedicated server authority prototype before UI expansion 
+
+Before M17 
+
+VR physical exploits 
+
+Track trajectories, reach, comfort and injury risk 
+
+Before VR production 
+
+Licensing/likeness 
+
+Use fictional names and licensed assets unless rights acquired 
+
+Before public demo 
+
+28. Release criteria and feature accounting 
+
+A release is blocked by any critical crash, save-loss issue, official cross-domain contamination, invalid bout finalization, unlicensed redistributed asset, or reproducible exploit allowing forged ranked outcomes. Features not required for a gate remain visible as deferred backlog items, not hidden assumptions. 
+
+Release 
+
+Must-have 
+
+Explicitly deferrable 
+
+Prototype P1 
+
+Responsive controller boxing, rules, basic AI, one ring 
+
+Promoters, detailed creator, online, VR 
+
+Offline alpha P2 
+
+Create/train/fight/save loop, multiple AI styles 
+
+Full sanctioning landscape, cinematic polish 
+
+Offline beta P4 
+
+Persistent universe, rankings, titles, long-run simulation, stability 
+
+Online PvP and VR 
+
+Traditional online P5–P6 
+
+Dedicated authority, account safety, domain-scoped ladder, telemetry 
+
+Cross-domain play, VR, face scanning 
+
+VR P7 
+
+Independent world, motion safety, VR performance, parity of career systems 
+
+Traditional-vs-VR official competition 
+
+29. First 30 working sessions: executable startup sequence 
+
+Sessions 
+
+Target deliverable 
+
+1–3 
+
+Install/pin Unreal version, IDE, Python environment; create Git repository, ignore/LFS rules, project launch instructions. 
+
+4–6 
+
+Define data contracts, FighterTrueState, CombatIntent, FightResult and domain invariants; build fixtures. 
+
+7–10 
+
+Implement controller mapping, ring bounds, camera and two placeholder fighters. 
+
+11–15 
+
+Implement jab/cross/guard, animation notifies, hitboxes and combat debug overlay. 
+
+16–20 
+
+Add hooks, uppercuts, slips, counters, stamina and recovery. 
+
+21–24 
+
+Add round timer, knockdowns, judge cards, stoppage and results screen. 
+
+25–27 
+
+Implement first AI style and scripted regression fights. 
+
+28–30 
+
+Record playable build, measure frame times, run playtest, document defects and decide P1 gate. 
+
+Sessions are work blocks rather than calendar days. If punch contact is not convincing by session 15, pause world-system work and resolve animation/contact fundamentals first. Include an early server-authoritative two-client combat proof during this sequence. Defer public matchmaking, hosted ranked operations and persistent economy until their later gates. 
+
+30. Decision log and change control 
+
+Approved: traditional and VR have separate official competitive domains; gameplay is primary; single-player is first-class; persistent world is hybrid with authoritative official and isolated local universes; Python/SQL are preferred outside the frame-critical combat loop; two-person development milestones gate scope. Proposed and awaiting prototype validation: exact control layout, animation solution, hit-resolution method, specific AI planner, rankings weights, server tick, target platforms and commercial release sequencing. 
+
+For every changed assumption, record ADR ID, context, alternatives, decision, consequences, impacted modules, schema migration, and regression tests. No undocumented rule change should alter existing saves or official ranked history. 
