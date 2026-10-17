@@ -21,6 +21,7 @@ public:
 	AFBBoxerCharacter();
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void PawnClientRestart() override;
@@ -73,6 +74,9 @@ protected:
 	TObjectPtr<UInputAction> MoveAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> LookAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
 	TObjectPtr<UInputAction> JabAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
@@ -82,6 +86,7 @@ protected:
 	TObjectPtr<UInputAction> GuardAction;
 
 	void Move(const FInputActionValue& Value);
+	void Look(const FInputActionValue& Value);
 	void OnJab();
 	void OnCross();
 	void OnGuardStarted();
@@ -89,6 +94,8 @@ protected:
 
 	void SubmitLocalIntent(EFBAttackId Attack, bool bGuardHeld, EFBGuardState Guard);
 	AFBBoxerCharacter* FindOpponent() const;
+	class AFBBroadcastCamera* FindOrbitCamera() const;
+	void FaceOpponent(float DeltaSeconds);
 	void EnsureRuntimeInput();
 	void ApplyMappingContext();
 };

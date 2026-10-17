@@ -38,6 +38,7 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	}
 
 	Bundle.Move = MakeAction(Outer, TEXT("IA_FB_Move"), EInputActionValueType::Axis2D);
+	Bundle.Look = MakeAction(Outer, TEXT("IA_FB_Look"), EInputActionValueType::Axis2D);
 	Bundle.Jab = MakeAction(Outer, TEXT("IA_FB_Jab"), EInputActionValueType::Boolean);
 	Bundle.Cross = MakeAction(Outer, TEXT("IA_FB_Cross"), EInputActionValueType::Boolean);
 	Bundle.Guard = MakeAction(Outer, TEXT("IA_FB_Guard"), EInputActionValueType::Boolean);
@@ -49,7 +50,7 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::D, false, false);
 	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::A, false, true);
 
-	// Gamepad stick + axes + D-pad fallback
+	// Gamepad left stick + D-pad
 	Bundle.MappingContext->MapKey(Bundle.Move, EKeys::Gamepad_Left2D);
 	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftY, true, false);
 	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftX, false, false);
@@ -58,20 +59,33 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Right, false, false);
 	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Left, false, true);
 
-	// Jab: Square/X, Cross/A, R2
+	// Orbit look: right stick + mouse + Q/E yaw
+	Bundle.MappingContext->MapKey(Bundle.Look, EKeys::Gamepad_Right2D);
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Gamepad_RightY, true, true); // invert pitch stick
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Gamepad_RightX, false, false);
+	{
+		FEnhancedActionKeyMapping& Mouse = Bundle.MappingContext->MapKey(Bundle.Look, EKeys::Mouse2D);
+		if (UInputModifierScalar* Scalar = NewObject<UInputModifierScalar>(Bundle.MappingContext))
+		{
+			Scalar->Scalar = FVector(0.045f, 0.045f, 0.045f);
+			Mouse.Modifiers.Add(Scalar);
+		}
+	}
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::E, false, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Q, false, true);
+
+	// Jab / Cross / Guard
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::LeftMouseButton);
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::J);
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::Gamepad_FaceButton_Left);
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::Gamepad_FaceButton_Bottom);
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::Gamepad_RightTrigger);
 
-	// Cross: Triangle/Y, R1
 	Bundle.MappingContext->MapKey(Bundle.Cross, EKeys::RightMouseButton);
 	Bundle.MappingContext->MapKey(Bundle.Cross, EKeys::K);
 	Bundle.MappingContext->MapKey(Bundle.Cross, EKeys::Gamepad_FaceButton_Top);
 	Bundle.MappingContext->MapKey(Bundle.Cross, EKeys::Gamepad_RightShoulder);
 
-	// Guard: L1 / L2
 	Bundle.MappingContext->MapKey(Bundle.Guard, EKeys::LeftShift);
 	Bundle.MappingContext->MapKey(Bundle.Guard, EKeys::Gamepad_LeftShoulder);
 	Bundle.MappingContext->MapKey(Bundle.Guard, EKeys::Gamepad_LeftTrigger);

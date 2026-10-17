@@ -1,6 +1,7 @@
 // Final Bell
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBCombatComponent.h"
+#include "Camera/FBBroadcastCamera.h"
 #include "Input/FBRuntimeInputLibrary.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -17,10 +18,13 @@
 
 AFBBoxerCharacter::AFBBoxerCharacter()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
 	SetReplicateMovement(true);
 
 	GetCharacterMovement()->bOrientRotationToMovement = false;
+	GetCharacterMovement()->RotationRate = FRotator(0.f, 720.f, 0.f);
+	GetCharacterMovement()->bUseControllerDesiredRotation = false;
 	GetCharacterMovement()->MaxWalkSpeed = 320.f;
 	bUseControllerRotationYaw = false;
 
@@ -88,7 +92,7 @@ void AFBBoxerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 
 void AFBBoxerCharacter::EnsureRuntimeInput()
 {
-	if (DefaultMappingContext && MoveAction && JabAction && CrossAction && GuardAction)
+	if (DefaultMappingContext && MoveAction && LookAction && JabAction && CrossAction && GuardAction)
 	{
 		return;
 	}
@@ -96,6 +100,7 @@ void AFBBoxerCharacter::EnsureRuntimeInput()
 	const FFBRuntimeInputBundle Bundle = UFBRuntimeInputLibrary::EnsureBoxerInput(this);
 	DefaultMappingContext = Bundle.MappingContext;
 	MoveAction = Bundle.Move;
+	LookAction = Bundle.Look;
 	JabAction = Bundle.Jab;
 	CrossAction = Bundle.Cross;
 	GuardAction = Bundle.Guard;
@@ -137,6 +142,37 @@ void AFBBoxerCharacter::OnRep_PlayerState()
 	Super::OnRep_PlayerState();
 }
 
+void AFBBoxerCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (IsLocallyControlled())
+	{
+		FaceOpponent(DeltaSeconds);
+	}
+}
+
+void AFBBoxerCharacter::FaceOpponent(float DeltaSeconds)
+{
+	if (const AFBBoxerCharacter* Opp = FindOpponent())
+	{
+		const FVector ToOpp = (Opp->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+		if (!ToOpp.IsNearlyZero())
+		{
+			const FRotator Target(0.f, ToOpp.Rotation().Yaw, 0.f);
+			SetActorRotation(FMath::RInterpTo(GetActorRotation(), Target, DeltaSeconds, 10.f));
+		}
+	}
+}
+
+AFBBroadcastCamera* AFBBoxerCharacter::FindOrbitCamera() const
+{
+	for (TActorIterator<AFBBroadcastCamera> It(GetWorld()); It; ++It)
+	{
+		return *It;
+	}
+	return nullptr;
+}
+
 void AFBBoxerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
@@ -147,6 +183,10 @@ void AFBBoxerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 		if (MoveAction)
 		{
 			EIC->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AFBBoxerCharacter::Move);
+		}
+		if (LookAction)
+		{
+			EIC->BindAction(LookAction, ETriggerEvent::Triggered, this, &AFBBoxerCharacter::Look);
 		}
 		if (JabAction)
 		{
@@ -172,13 +212,19 @@ void AFBBoxerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 void AFBBoxerCharacter::Move(const FInputActionValue& Value)
 {
 	const FVector2D Axis = Value.Get<FVector2D>();
-	if (Controller)
+	// Boxing footwork: forward = toward opponent, strafe around them.
+	const FRotator Facing(0.f, GetActorRotation().Yaw, 0.f);
+	const FVector Forward = FRotationMatrix(Facing).GetUnitAxis(EAxis::X);
+	const FVector Right = FRotationMatrix(Facing).GetUnitAxis(EAxis::Y);
+	AddMovementInput(Forward, Axis.Y * MoveSpeedScale);
+	AddMovementInput(Right, Axis.X * MoveSpeedScale);
+}
+
+void AFBBoxerCharacter::Look(const FInputActionValue& Value)
+{
+	if (AFBBroadcastCamera* Cam = FindOrbitCamera())
 	{
-		const FRotator YawRot(0.f, Controller->GetControlRotation().Yaw, 0.f);
-		const FVector Forward = FRotationMatrix(YawRot).GetUnitAxis(EAxis::X);
-		const FVector Right = FRotationMatrix(YawRot).GetUnitAxis(EAxis::Y);
-		AddMovementInput(Forward, Axis.Y * MoveSpeedScale);
-		AddMovementInput(Right, Axis.X * MoveSpeedScale);
+		Cam->AddOrbitInput(Value.Get<FVector2D>());
 	}
 }
 

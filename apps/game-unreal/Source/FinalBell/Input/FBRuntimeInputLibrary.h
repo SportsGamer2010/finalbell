@@ -20,6 +20,9 @@ struct FFBRuntimeInputBundle
 	TObjectPtr<UInputAction> Move = nullptr;
 
 	UPROPERTY()
+	TObjectPtr<UInputAction> Look = nullptr;
+
+	UPROPERTY()
 	TObjectPtr<UInputAction> Jab = nullptr;
 
 	UPROPERTY()
