@@ -1,7 +1,7 @@
-// Final Bell
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBCombatComponent.h"
 #include "Camera/FBBroadcastCamera.h"
+#include "Ring/FBRingBounds.h"
 #include "Input/FBRuntimeInputLibrary.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -15,6 +15,7 @@
 #include "EngineUtils.h"
 #include "InputActionValue.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Kismet/GameplayStatics.h"
 
 AFBBoxerCharacter::AFBBoxerCharacter()
 {
@@ -23,71 +24,157 @@ AFBBoxerCharacter::AFBBoxerCharacter()
 	SetReplicateMovement(true);
 
 	GetCharacterMovement()->bOrientRotationToMovement = false;
-	GetCharacterMovement()->RotationRate = FRotator(0.f, 720.f, 0.f);
 	GetCharacterMovement()->bUseControllerDesiredRotation = false;
 	GetCharacterMovement()->MaxWalkSpeed = 320.f;
 	bUseControllerRotationYaw = false;
 
 	CombatComponent = CreateDefaultSubobject<UFBCombatComponent>(TEXT("CombatComponent"));
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CapsuleMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMesh(TEXT("/Engine/BasicShapes/Cube.Cube"));
 
-	PlaceholderBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderBody"));
-	PlaceholderBody->SetupAttachment(GetCapsuleComponent());
-	PlaceholderBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	PlaceholderBody->SetRelativeLocation(FVector(0.f, 0.f, -40.f));
-	PlaceholderBody->SetRelativeScale3D(FVector(0.55f, 0.55f, 1.1f));
-	if (CapsuleMesh.Succeeded())
+	auto AttachMesh = [&](const TCHAR* Name, UStaticMesh* MeshAsset, const FVector& Rel, const FVector& Scale) -> UStaticMeshComponent*
 	{
-		PlaceholderBody->SetStaticMesh(CapsuleMesh.Object);
-	}
-
-	PlaceholderHead = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderHead"));
-	PlaceholderHead->SetupAttachment(PlaceholderBody);
-	PlaceholderHead->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	PlaceholderHead->SetRelativeLocation(FVector(0.f, 0.f, 70.f));
-	PlaceholderHead->SetRelativeScale3D(FVector(0.55f, 0.55f, 0.45f));
-	if (SphereMesh.Succeeded())
-	{
-		PlaceholderHead->SetStaticMesh(SphereMesh.Object);
-	}
-}
-
-void AFBBoxerCharacter::ApplyPlaceholderAppearance(bool bIsOpponent)
-{
-	const FLinearColor Color = bIsOpponent
-		? FLinearColor(0.85f, 0.15f, 0.12f)   // red corner
-		: FLinearColor(0.15f, 0.35f, 0.95f);  // blue corner
-
-	auto Tint = [Color](UStaticMeshComponent* MeshComp)
-	{
-		if (!MeshComp)
+		UStaticMeshComponent* Comp = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		Comp->SetupAttachment(GetCapsuleComponent());
+		Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Comp->SetRelativeLocation(Rel);
+		Comp->SetRelativeScale3D(Scale);
+		if (MeshAsset)
 		{
-			return;
+			Comp->SetStaticMesh(MeshAsset);
 		}
-		UMaterialInterface* Base = MeshComp->GetMaterial(0);
-		if (!Base)
-		{
-			Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-		}
-		if (UMaterialInstanceDynamic* MID = MeshComp->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Base))
-		{
-			MID->SetVectorParameterValue(TEXT("Color"), Color);
-			MID->SetVectorParameterValue(TEXT("BaseColor"), Color);
-		}
+		return Comp;
 	};
 
-	Tint(PlaceholderBody);
-	Tint(PlaceholderHead);
+	UStaticMesh* Cyl = CylinderMesh.Succeeded() ? CylinderMesh.Object : nullptr;
+	UStaticMesh* Sph = SphereMesh.Succeeded() ? SphereMesh.Object : nullptr;
+	UStaticMesh* Cub = CubeMesh.Succeeded() ? CubeMesh.Object : nullptr;
+
+	BodyMesh = AttachMesh(TEXT("BodyMesh"), Cyl, FVector(0.f, 0.f, -20.f), FVector(0.5f, 0.45f, 0.85f));
+	HeadMesh = AttachMesh(TEXT("HeadMesh"), Sph, FVector(0.f, 0.f, 55.f), FVector(0.42f, 0.42f, 0.42f));
+	TrunksMesh = AttachMesh(TEXT("TrunksMesh"), Cub, FVector(0.f, 0.f, -55.f), FVector(0.55f, 0.4f, 0.22f));
+	LeadGloveMesh = AttachMesh(TEXT("LeadGloveMesh"), Sph, FVector(35.f, -18.f, 20.f), FVector(0.22f, 0.22f, 0.22f));
+	RearGloveMesh = AttachMesh(TEXT("RearGloveMesh"), Sph, FVector(20.f, 22.f, 18.f), FVector(0.22f, 0.22f, 0.22f));
+}
+
+void AFBBoxerCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+	ApplyBasicSkin(CornerSkin);
+	RefreshCombatPresentation();
 }
 
 void AFBBoxerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AFBBoxerCharacter, Stance);
+	DOREPLIFETIME(AFBBoxerCharacter, CornerSkin);
 	DOREPLIFETIME(AFBBoxerCharacter, AccumulatedDamage);
 	DOREPLIFETIME(AFBBoxerCharacter, AppliedAttackInstanceIds);
+}
+
+void AFBBoxerCharacter::OnRep_CornerSkin()
+{
+	ApplyBasicSkin(CornerSkin);
+}
+
+void AFBBoxerCharacter::TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color)
+{
+	if (!MeshComp)
+	{
+		return;
+	}
+	UMaterialInterface* Base = MeshComp->GetMaterial(0);
+	if (!Base)
+	{
+		Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+	if (UMaterialInstanceDynamic* MID = MeshComp->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Base))
+	{
+		MID->SetVectorParameterValue(TEXT("Color"), Color);
+		MID->SetVectorParameterValue(TEXT("BaseColor"), Color);
+	}
+}
+
+void AFBBoxerCharacter::ApplyBasicSkin(EFBCornerSkin Corner)
+{
+	CornerSkin = Corner;
+	const bool bRed = Corner == EFBCornerSkin::RedCorner;
+	const FLinearColor Skin(0.86f, 0.68f, 0.52f);
+	const FLinearColor Trunks = bRed ? FLinearColor(0.75f, 0.08f, 0.08f) : FLinearColor(0.08f, 0.25f, 0.75f);
+	const FLinearColor Gloves = bRed ? FLinearColor(0.85f, 0.12f, 0.1f) : FLinearColor(0.12f, 0.35f, 0.9f);
+
+	TintMesh(BodyMesh, Skin);
+	TintMesh(HeadMesh, Skin);
+	TintMesh(TrunksMesh, Trunks);
+	TintMesh(LeadGloveMesh, Gloves);
+	TintMesh(RearGloveMesh, Gloves);
+}
+
+void AFBBoxerCharacter::ApplyPlaceholderAppearance(bool bIsOpponent)
+{
+	ApplyBasicSkin(bIsOpponent ? EFBCornerSkin::RedCorner : EFBCornerSkin::BlueCorner);
+}
+
+void AFBBoxerCharacter::RefreshCombatPresentation()
+{
+	if (!CombatComponent)
+	{
+		return;
+	}
+
+	const bool bGuarding = CombatComponent->GetGuardState() != EFBGuardState::Open;
+	const EFBAttackPhase Phase = CombatComponent->GetAttackPhase();
+	const EFBAttackId Attack = CombatComponent->GetActiveAttack();
+
+	FVector Lead = FVector(35.f, -18.f, 20.f);
+	FVector Rear = FVector(20.f, 22.f, 18.f);
+
+	if (bGuarding)
+	{
+		Lead = FVector(28.f, -12.f, 38.f);
+		Rear = FVector(28.f, 12.f, 38.f);
+	}
+
+	if (Phase == EFBAttackPhase::Startup || Phase == EFBAttackPhase::Active)
+	{
+		const float Extend = (Phase == EFBAttackPhase::Active) ? 55.f : 25.f;
+		if (Attack == EFBAttackId::Jab)
+		{
+			Lead.X += Extend;
+		}
+		else if (Attack == EFBAttackId::Cross)
+		{
+			Rear.X += Extend + 10.f;
+		}
+	}
+
+	if (LeadGloveMesh)
+	{
+		LeadGloveMesh->SetRelativeLocation(Lead);
+	}
+	if (RearGloveMesh)
+	{
+		RearGloveMesh->SetRelativeLocation(Rear);
+	}
+}
+
+void AFBBoxerCharacter::HandleImpactPresentation(const FFBImpactEvent& Impact)
+{
+	if (Impact.Result == EFBContactResult::CleanHit)
+	{
+		HitFlashTime = 0.18f;
+		if (AFBBoxerCharacter* Opp = FindOpponent())
+		{
+			Opp->HitFlashTime = 0.18f;
+		}
+	}
+	else if (Impact.Result == EFBContactResult::Blocked)
+	{
+		HitFlashTime = 0.08f;
+	}
 }
 
 void AFBBoxerCharacter::EnsureRuntimeInput()
@@ -125,16 +212,42 @@ void AFBBoxerCharacter::ApplyMappingContext()
 	}
 }
 
+void AFBBoxerCharacter::EnsurePersonalCamera()
+{
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (!PersonalOrbitCamera)
+	{
+		FActorSpawnParameters Params;
+		Params.Owner = this;
+		PersonalOrbitCamera = GetWorld()->SpawnActor<AFBBroadcastCamera>(
+			GetActorLocation() + FVector(0.f, -700.f, 420.f),
+			FRotator(-18.f, 90.f, 0.f),
+			Params);
+	}
+
+	if (PersonalOrbitCamera)
+	{
+		PersonalOrbitCamera->SetFighters(this, FindOpponent());
+		PersonalOrbitCamera->ForcePossessedView();
+	}
+}
+
 void AFBBoxerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 	ApplyMappingContext();
+	EnsurePersonalCamera();
 }
 
 void AFBBoxerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
 	ApplyMappingContext();
+	EnsurePersonalCamera();
 }
 
 void AFBBoxerCharacter::OnRep_PlayerState()
@@ -145,27 +258,75 @@ void AFBBoxerCharacter::OnRep_PlayerState()
 void AFBBoxerCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// Keep fighters on the canvas (authority + local prediction).
+	if (HasAuthority() || IsLocallyControlled())
+	{
+		for (TActorIterator<AFBRingBounds> It(GetWorld()); It; ++It)
+		{
+			const FVector Loc = GetActorLocation();
+			const FVector Clamped = It->ClampToRing(Loc);
+			if (!Clamped.Equals(Loc, 0.5f))
+			{
+				SetActorLocation(Clamped, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+			break;
+		}
+	}
+
 	if (IsLocallyControlled())
 	{
 		FaceOpponent(DeltaSeconds);
+		if (PersonalOrbitCamera)
+		{
+			PersonalOrbitCamera->SetFighters(this, FindOpponent());
+		}
+	}
+
+	RefreshCombatPresentation();
+
+	if (HitFlashTime > 0.f)
+	{
+		HitFlashTime -= DeltaSeconds;
+		const float Pulse = 1.f + HitFlashTime * 2.f;
+		if (HeadMesh)
+		{
+			HeadMesh->SetRelativeScale3D(FVector(0.42f) * Pulse);
+		}
+	}
+	else if (HeadMesh)
+	{
+		HeadMesh->SetRelativeScale3D(FVector(0.42f));
 	}
 }
 
 void AFBBoxerCharacter::FaceOpponent(float DeltaSeconds)
 {
-	if (const AFBBoxerCharacter* Opp = FindOpponent())
+	const AFBBoxerCharacter* Opp = FindOpponent();
+	if (!Opp)
 	{
-		const FVector ToOpp = (Opp->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		if (!ToOpp.IsNearlyZero())
-		{
-			const FRotator Target(0.f, ToOpp.Rotation().Yaw, 0.f);
-			SetActorRotation(FMath::RInterpTo(GetActorRotation(), Target, DeltaSeconds, 10.f));
-		}
+		return;
 	}
+
+	const bool bLocked = CombatComponent && CombatComponent->IsAttackCommitted();
+	const float Speed = bLocked ? PunchLockedTurnSpeed : FaceTurnSpeed;
+
+	const FVector ToOpp = (Opp->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
+	if (ToOpp.IsNearlyZero())
+	{
+		return;
+	}
+
+	const FRotator Target(0.f, ToOpp.Rotation().Yaw, 0.f);
+	SetActorRotation(FMath::RInterpTo(GetActorRotation(), Target, DeltaSeconds, Speed));
 }
 
 AFBBroadcastCamera* AFBBoxerCharacter::FindOrbitCamera() const
 {
+	if (PersonalOrbitCamera)
+	{
+		return PersonalOrbitCamera;
+	}
 	for (TActorIterator<AFBBroadcastCamera> It(GetWorld()); It; ++It)
 	{
 		return *It;
@@ -203,28 +364,30 @@ void AFBBoxerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 			EIC->BindAction(GuardAction, ETriggerEvent::Canceled, this, &AFBBoxerCharacter::OnGuardCompleted);
 		}
 	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("FinalBell: InputComponent is not EnhancedInputComponent. Check DefaultInput.ini."));
-	}
 }
 
 void AFBBoxerCharacter::Move(const FInputActionValue& Value)
 {
-	const FVector2D Axis = Value.Get<FVector2D>();
-	// Boxing footwork: forward = toward opponent, strafe around them.
+	FVector2D Axis = Value.Get<FVector2D>();
+	if (Axis.SizeSquared() < FMath::Square(0.35f))
+	{
+		return;
+	}
 	const FRotator Facing(0.f, GetActorRotation().Yaw, 0.f);
-	const FVector Forward = FRotationMatrix(Facing).GetUnitAxis(EAxis::X);
-	const FVector Right = FRotationMatrix(Facing).GetUnitAxis(EAxis::Y);
-	AddMovementInput(Forward, Axis.Y * MoveSpeedScale);
-	AddMovementInput(Right, Axis.X * MoveSpeedScale);
+	AddMovementInput(FRotationMatrix(Facing).GetUnitAxis(EAxis::X), Axis.Y * MoveSpeedScale);
+	AddMovementInput(FRotationMatrix(Facing).GetUnitAxis(EAxis::Y), Axis.X * MoveSpeedScale);
 }
 
 void AFBBoxerCharacter::Look(const FInputActionValue& Value)
 {
+	FVector2D Axis = Value.Get<FVector2D>();
+	if (Axis.SizeSquared() < FMath::Square(0.40f))
+	{
+		return;
+	}
 	if (AFBBroadcastCamera* Cam = FindOrbitCamera())
 	{
-		Cam->AddOrbitInput(Value.Get<FVector2D>());
+		Cam->AddOrbitInput(Axis);
 	}
 }
 
@@ -288,18 +451,11 @@ void AFBBoxerCharacter::ServerSubmitCombatIntent_Implementation(const FFBCombatI
 
 AFBBoxerCharacter* AFBBoxerCharacter::FindOpponent() const
 {
-	UWorld* World = GetWorld();
-	if (!World)
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
 	{
-		return nullptr;
-	}
-
-	for (TActorIterator<AFBBoxerCharacter> It(World); It; ++It)
-	{
-		AFBBoxerCharacter* Other = *It;
-		if (Other && Other != this)
+		if (*It && *It != this)
 		{
-			return Other;
+			return *It;
 		}
 	}
 	return nullptr;
@@ -317,4 +473,5 @@ void AFBBoxerCharacter::ApplyAuthoritativeDamage(float Amount, int32 AttackInsta
 	}
 	AppliedAttackInstanceIds.Add(AttackInstanceId);
 	AccumulatedDamage += FMath::Max(0.f, Amount);
+	HitFlashTime = 0.18f;
 }

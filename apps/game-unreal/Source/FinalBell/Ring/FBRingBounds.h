@@ -1,4 +1,4 @@
-// Final Bell — ring boundary volume (P1 placeholder)
+// Final Bell — ring boundary volume
 #pragma once
 
 #include "CoreMinimal.h"
@@ -14,6 +14,9 @@ class FINALBELL_API AFBRingBounds : public AActor
 
 public:
 	AFBRingBounds();
+
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Ring")
+	void ConfigurePlayableArea(float HalfExtentX, float HalfExtentY);
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Ring")
 	FVector ClampToRing(const FVector& WorldLocation) const;

@@ -1,8 +1,6 @@
-// Final Bell — authoritative combat stub (standalone + listen/dedicated server)
 #include "Combat/FBCombatComponent.h"
 #include "Combat/FBBoxerCharacter.h"
 #include "Net/UnrealNetwork.h"
-#include "GameFramework/Actor.h"
 
 UFBCombatComponent::UFBCombatComponent()
 {
@@ -17,7 +15,38 @@ void UFBCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME(UFBCombatComponent, Fatigue);
 	DOREPLIFETIME(UFBCombatComponent, GuardState);
 	DOREPLIFETIME(UFBCombatComponent, ActiveAttack);
+	DOREPLIFETIME(UFBCombatComponent, AttackPhase);
 	DOREPLIFETIME(UFBCombatComponent, LastProcessedSequence);
+	DOREPLIFETIME(UFBCombatComponent, LastImpact);
+}
+
+void UFBCombatComponent::OnRep_CombatVisual()
+{
+	OnAttackPhaseChanged.Broadcast(AttackPhase);
+	if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetOwner()))
+	{
+		Boxer->RefreshCombatPresentation();
+	}
+}
+
+void UFBCombatComponent::OnRep_LastImpact()
+{
+	OnImpactResolved.Broadcast(LastImpact);
+	if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetOwner()))
+	{
+		Boxer->HandleImpactPresentation(LastImpact);
+	}
+}
+
+void UFBCombatComponent::SetPhase(EFBAttackPhase NewPhase, float Duration)
+{
+	AttackPhase = NewPhase;
+	PhaseTimeRemaining = Duration;
+	OnAttackPhaseChanged.Broadcast(AttackPhase);
+	if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetOwner()))
+	{
+		Boxer->RefreshCombatPresentation();
+	}
 }
 
 void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -29,22 +58,32 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		return;
 	}
 
-	if (ActiveWindowRemaining > 0.f)
+	if (AttackPhase != EFBAttackPhase::Idle)
 	{
-		ActiveWindowRemaining = FMath::Max(0.f, ActiveWindowRemaining - DeltaTime);
-		if (ActiveWindowRemaining <= 0.f)
+		PhaseTimeRemaining -= DeltaTime;
+		if (PhaseTimeRemaining <= 0.f)
 		{
-			ActiveAttack = EFBAttackId::None;
+			if (AttackPhase == EFBAttackPhase::Startup)
+			{
+				SetPhase(EFBAttackPhase::Active, ActiveWindowSeconds);
+				bResolvedThisAttack = false;
+				ResolveAgainstOpponent(PendingOpponent.Get());
+			}
+			else if (AttackPhase == EFBAttackPhase::Active)
+			{
+				SetPhase(EFBAttackPhase::Recovery, RecoverySeconds);
+				ActiveAttack = EFBAttackId::None;
+			}
+			else if (AttackPhase == EFBAttackPhase::Recovery)
+			{
+				SetPhase(EFBAttackPhase::Idle, 0.f);
+				PendingOpponent = nullptr;
+			}
 		}
 	}
 
-	if (RecoveryRemaining > 0.f)
-	{
-		RecoveryRemaining = FMath::Max(0.f, RecoveryRemaining - DeltaTime);
-	}
-
 	const float RecoverableCeiling = FMath::Max(10.f, MaxBurstEnergy - Fatigue);
-	if (ActiveAttack == EFBAttackId::None && RecoveryRemaining <= 0.f && GuardState == EFBGuardState::Open)
+	if (AttackPhase == EFBAttackPhase::Idle && GuardState == EFBGuardState::Open)
 	{
 		BurstEnergy = FMath::Min(RecoverableCeiling, BurstEnergy + EnergyRecoverPerSecond * DeltaTime);
 	}
@@ -75,12 +114,13 @@ float UFBCombatComponent::DamageFor(EFBAttackId Attack) const
 	}
 }
 
-void UFBCombatComponent::BeginAttack(EFBAttackId Attack)
+void UFBCombatComponent::BeginAttack(EFBAttackId Attack, AActor* Opponent)
 {
 	ActiveAttack = Attack;
-	ActiveWindowRemaining = ActiveWindowSeconds;
-	RecoveryRemaining = RecoverySeconds;
+	PendingOpponent = Opponent;
+	bResolvedThisAttack = false;
 	BurstEnergy = FMath::Max(0.f, BurstEnergy - CostFor(Attack));
+	SetPhase(EFBAttackPhase::Startup, StartupSeconds);
 }
 
 bool UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent& Intent, AActor* Opponent)
@@ -98,19 +138,24 @@ bool UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent& Intent, A
 
 	if (Intent.SchemaVersion != TEXT("1.0.0"))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("FinalBell: rejected CombatIntent schema %s"), *Intent.SchemaVersion);
 		return false;
 	}
 
 	LastProcessedSequence = Intent.Sequence;
-	GuardState = Intent.bGuardHeld ? Intent.Guard : EFBGuardState::Open;
+
+	// Cannot raise/lower guard mid-committed punch.
+	if (AttackPhase == EFBAttackPhase::Idle)
+	{
+		GuardState = Intent.bGuardHeld ? Intent.Guard : EFBGuardState::Open;
+		OnRep_CombatVisual();
+	}
 
 	if (Intent.Attack == EFBAttackId::None)
 	{
 		return true;
 	}
 
-	if (RecoveryRemaining > 0.f || ActiveAttack != EFBAttackId::None)
+	if (AttackPhase != EFBAttackPhase::Idle)
 	{
 		return false;
 	}
@@ -120,13 +165,18 @@ bool UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent& Intent, A
 		return false;
 	}
 
-	BeginAttack(Intent.Attack);
-	ResolveAgainstOpponent(Opponent);
+	BeginAttack(Intent.Attack, Opponent);
 	return true;
 }
 
 void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent)
 {
+	if (bResolvedThisAttack || ActiveAttack == EFBAttackId::None)
+	{
+		return;
+	}
+	bResolvedThisAttack = true;
+
 	FFBImpactEvent Impact;
 	Impact.AttackInstanceId = NextAttackInstanceId++;
 	Impact.Attack = ActiveAttack;
@@ -139,26 +189,32 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent)
 	ResolvedAttackInstanceIds.Add(Impact.AttackInstanceId);
 
 	AFBBoxerCharacter* Defender = Cast<AFBBoxerCharacter>(Opponent);
-	if (!Defender || !GetOwner())
+	AActor* OwnerActor = GetOwner();
+	if (!Defender || !OwnerActor)
 	{
 		Impact.Result = EFBContactResult::Miss;
 		Fatigue = FMath::Min(80.f, Fatigue + FatiguePerMiss);
-		OnImpactResolved.Broadcast(Impact);
+		LastImpact = Impact;
+		OnRep_LastImpact();
 		return;
 	}
 
-	const float Dist = FVector::Dist(GetOwner()->GetActorLocation(), Defender->GetActorLocation());
-	if (Dist > MaxReachUU)
+	const float Dist = FVector::Dist(OwnerActor->GetActorLocation(), Defender->GetActorLocation());
+	const FVector ToDef = (Defender->GetActorLocation() - OwnerActor->GetActorLocation()).GetSafeNormal2D();
+	const float FacingDot = FVector::DotProduct(OwnerActor->GetActorForwardVector().GetSafeNormal2D(), ToDef);
+
+	if (Dist > MaxReachUU || Dist < MinReachUU || FacingDot < 0.35f)
 	{
 		Impact.Result = EFBContactResult::Miss;
 		Fatigue = FMath::Min(80.f, Fatigue + FatiguePerMiss);
-		OnImpactResolved.Broadcast(Impact);
+		LastImpact = Impact;
+		OnRep_LastImpact();
+		UE_LOG(LogTemp, Log, TEXT("FinalBell miss attack=%d dist=%.1f facing=%.2f"), (int32)ActiveAttack, Dist, FacingDot);
 		return;
 	}
 
 	UFBCombatComponent* DefenderCombat = Defender->GetCombatComponent();
-	const bool bBlocked = DefenderCombat
-		&& DefenderCombat->GetGuardState() != EFBGuardState::Open;
+	const bool bBlocked = DefenderCombat && DefenderCombat->GetGuardState() != EFBGuardState::Open;
 
 	if (bBlocked)
 	{
@@ -173,5 +229,10 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent)
 	}
 
 	Defender->ApplyAuthoritativeDamage(Impact.DamageApplied, Impact.AttackInstanceId);
-	OnImpactResolved.Broadcast(Impact);
+	LastImpact = Impact;
+	OnRep_LastImpact();
+	UE_LOG(LogTemp, Log, TEXT("FinalBell impact %s dmg=%.1f"),
+		Impact.Result == EFBContactResult::CleanHit ? TEXT("HIT") :
+		Impact.Result == EFBContactResult::Blocked ? TEXT("BLOCK") : TEXT("MISS"),
+		Impact.DamageApplied);
 }

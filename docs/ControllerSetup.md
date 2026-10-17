@@ -28,6 +28,15 @@
 5. Output Log should show `GameInput flags: Gamepad=1 Controller=1` and **more than 1** connected device.
 6. Left stick moves blue; □ / ✕ jabs.
 
+## Two controllers (2-player PIE)
+
+Yes — both should work at once after the `FBGameViewportClient` change:
+
+- Pad 1 → host window (blue)
+- Pad 2 → client window (red)
+- Keep **Route Gamepad to Second Window** unchecked
+- Play with **Number of Players: 2** / Listen Server
+
 ## Fallback if still 1 device
 
 Use DSX (ViGEm is already on this machine) to expose an Xbox 360 virtual pad, then Play again.

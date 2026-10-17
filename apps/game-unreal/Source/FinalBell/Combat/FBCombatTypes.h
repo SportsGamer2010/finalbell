@@ -35,6 +35,22 @@ enum class EFBContactResult : uint8
 	CleanHit
 };
 
+UENUM(BlueprintType)
+enum class EFBAttackPhase : uint8
+{
+	Idle = 0,
+	Startup,
+	Active,
+	Recovery
+};
+
+UENUM(BlueprintType)
+enum class EFBCornerSkin : uint8
+{
+	BlueCorner,
+	RedCorner
+};
+
 /** Client→server intent. Never carries damage/stamina/win authority. */
 USTRUCT(BlueprintType)
 struct FFBCombatIntent
@@ -56,7 +72,6 @@ struct FFBCombatIntent
 	UPROPERTY(BlueprintReadWrite, Category = "FinalBell|Combat")
 	EFBGuardState Guard = EFBGuardState::Open;
 
-	/** Contract schema version string mirrored from packages/contracts. */
 	UPROPERTY(BlueprintReadWrite, Category = "FinalBell|Combat")
 	FString SchemaVersion = TEXT("1.0.0");
 };

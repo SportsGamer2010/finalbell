@@ -17,8 +17,11 @@ class FINALBELL_API UFBP1ArenaBootstrap : public UObject
 	GENERATED_BODY()
 
 public:
-	/** Idempotent: builds missing P1 arena pieces in World. Returns player-facing opponent if spawned/found. */
-	static void EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlayer, AFBBoxerCharacter*& OutOpponent, AFBBroadcastCamera*& OutCamera);
+	/**
+	 * Idempotent: builds missing P1 arena pieces in World.
+	 * @param bSpawnOpponentIfMissing when false, only ring props are ensured (for 2-human matches).
+	 */
+	static void EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlayer, AFBBoxerCharacter*& OutOpponent, AFBBroadcastCamera*& OutCamera, bool bSpawnOpponentIfMissing = true);
 
 private:
 	static AActor* SpawnFloor(UWorld* World);

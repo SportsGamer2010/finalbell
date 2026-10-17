@@ -1,8 +1,12 @@
 #include "Combat/FBSparringGameMode.h"
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBSparringPlayerController.h"
-#include "Camera/FBBroadcastCamera.h"
+#include "Combat/FBCombatTypes.h"
 #include "Ring/FBP1ArenaBootstrap.h"
+#include "Camera/FBBroadcastCamera.h"
+#include "GameFramework/PlayerStart.h"
+#include "EngineUtils.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
 AFBSparringGameMode::AFBSparringGameMode()
@@ -16,41 +20,118 @@ AFBSparringGameMode::AFBSparringGameMode()
 void AFBSparringGameMode::BeginPlay()
 {
 	Super::BeginPlay();
-	UE_LOG(LogTemp, Log, TEXT("Final Bell sparring mode ready (auto-arena=%s)."), bAutoBuildP1Arena ? TEXT("on") : TEXT("off"));
+	UE_LOG(LogTemp, Log, TEXT("Final Bell sparring ready. Solo=AI dummy, 2 PIE players=human vs human."));
 
 	if (bAutoBuildP1Arena)
 	{
-		// Delay so the default pawn has time to spawn on Entry map.
-		GetWorldTimerManager().SetTimer(ArenaBuildTimer, this, &AFBSparringGameMode::TryBuildArenaAndStart, 0.25f, false);
+		GetWorldTimerManager().SetTimer(ArenaBuildTimer, this, &AFBSparringGameMode::TryBuildArenaAndStart, 0.35f, false);
 	}
 }
 
 void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
-	if (bAutoBuildP1Arena && !bArenaBuilt)
+	if (bAutoBuildP1Arena)
 	{
-		GetWorldTimerManager().SetTimer(ArenaBuildTimer, this, &AFBSparringGameMode::TryBuildArenaAndStart, 0.15f, false);
+		GetWorldTimerManager().SetTimer(ArenaBuildTimer, this, &AFBSparringGameMode::TryBuildArenaAndStart, 0.2f, false);
 	}
 }
 
-void AFBSparringGameMode::TryBuildArenaAndStart()
+AActor* AFBSparringGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
-	if (!HasAuthority() || bArenaBuilt || !bAutoBuildP1Arena)
+	TArray<AActor*> Starts;
+	UGameplayStatics::GetAllActorsOfClass(this, APlayerStart::StaticClass(), Starts);
+	if (Starts.Num() > 0)
 	{
-		return;
+		AActor* Chosen = Starts[NextStartIndex % Starts.Num()];
+		++NextStartIndex;
+		return Chosen;
+	}
+	return Super::ChoosePlayerStart_Implementation(Player);
+}
+
+void AFBSparringGameMode::PlaceFightersForMatch()
+{
+	TArray<AFBBoxerCharacter*> Humans;
+	AFBBoxerCharacter* AiDummy = nullptr;
+
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	{
+		AFBBoxerCharacter* Boxer = *It;
+		if (!Boxer)
+		{
+			continue;
+		}
+		if (Boxer->ActorHasTag(TEXT("FB_P1Opponent")) && !Boxer->IsPlayerControlled())
+		{
+			AiDummy = Boxer;
+		}
+		else
+		{
+			Humans.Add(Boxer);
+		}
+	}
+
+	const int32 HumanCount = Humans.Num();
+	const bool bNeedAi = bSpawnAiIfSolo && HumanCount < 2;
+
+	if (!bNeedAi && AiDummy)
+	{
+		AiDummy->Destroy();
+		AiDummy = nullptr;
 	}
 
 	AFBBoxerCharacter* Player = nullptr;
 	AFBBoxerCharacter* Opponent = nullptr;
-	AFBBroadcastCamera* Camera = nullptr;
-	UFBP1ArenaBootstrap::EnsureArena(GetWorld(), Player, Opponent, Camera);
-	bArenaBuilt = (Player != nullptr || Opponent != nullptr);
+	AFBBroadcastCamera* UnusedCam = nullptr;
 
-	if (Camera)
+	if (bNeedAi)
 	{
-		Camera->ForcePossessedView();
+		UFBP1ArenaBootstrap::EnsureArena(GetWorld(), Player, Opponent, UnusedCam, true);
+		if (UnusedCam)
+		{
+			UnusedCam->Destroy(); // each human uses a personal orbit camera
+		}
 	}
+	else
+	{
+		AFBBoxerCharacter* DummyA = nullptr;
+		AFBBoxerCharacter* DummyB = nullptr;
+		AFBBroadcastCamera* DummyCam = nullptr;
+		UFBP1ArenaBootstrap::EnsureArena(GetWorld(), DummyA, DummyB, DummyCam, false);
+
+		Humans.Reset();
+		for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+		{
+			if (*It && (*It)->IsPlayerControlled())
+			{
+				Humans.Add(*It);
+			}
+		}
+
+		if (Humans.Num() >= 1)
+		{
+			Humans[0]->SetActorLocation(FVector(-220.f, 0.f, 96.f));
+			Humans[0]->ApplyBasicSkin(EFBCornerSkin::BlueCorner);
+		}
+		if (Humans.Num() >= 2)
+		{
+			Humans[1]->SetActorLocation(FVector(220.f, 0.f, 96.f));
+			Humans[1]->ApplyBasicSkin(EFBCornerSkin::RedCorner);
+		}
+	}
+
+	bArenaBuilt = true;
+}
+
+void AFBSparringGameMode::TryBuildArenaAndStart()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	PlaceFightersForMatch();
 
 	if (bAutoStartBout && Phase == EFBBoutPhase::PreBout)
 	{
@@ -121,5 +202,5 @@ void AFBSparringGameMode::FinalizeResultOnce()
 		return;
 	}
 	bResultFinalized = true;
-	UE_LOG(LogTemp, Log, TEXT("Final Bell: bout finalized once (rounds=%d). Scorecards TBD P1+/P2."), TotalRounds);
+	UE_LOG(LogTemp, Log, TEXT("Final Bell: bout finalized once (rounds=%d)."), TotalRounds);
 }

@@ -1,4 +1,4 @@
-// Final Bell — placeholder boxer with footwork, stance, combat component (P1)
+// Final Bell — boxer with basic skin, punch presentation, opponent-facing footwork
 #pragma once
 
 #include "CoreMinimal.h"
@@ -10,6 +10,7 @@ class UFBCombatComponent;
 class UStaticMeshComponent;
 class UInputMappingContext;
 class UInputAction;
+class AFBBroadcastCamera;
 struct FInputActionValue;
 
 UCLASS()
@@ -21,6 +22,7 @@ public:
 	AFBBoxerCharacter();
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void PossessedBy(AController* NewController) override;
@@ -39,25 +41,52 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSubmitCombatIntent(const FFBCombatIntent& Intent);
 
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
+	void ApplyBasicSkin(EFBCornerSkin Corner);
+
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
+	void RefreshCombatPresentation();
+
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
+	void HandleImpactPresentation(const FFBImpactEvent& Impact);
+
+	/** Compatibility with older arena bootstrap calls. */
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
+	void ApplyPlaceholderAppearance(bool bIsOpponent);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "FinalBell|Boxer")
 	EFBStance Stance = EFBStance::Orthodox;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing = OnRep_CornerSkin, Category = "FinalBell|Boxer")
+	EFBCornerSkin CornerSkin = EFBCornerSkin::BlueCorner;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer")
 	float MoveSpeedScale = 1.f;
 
-	/** Temporary colored body so P1 is visible without authored fighter meshes. */
-	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
-	void ApplyPlaceholderAppearance(bool bIsOpponent);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer")
+	float FaceTurnSpeed = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer")
+	float PunchLockedTurnSpeed = 1.5f;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Combat")
 	TObjectPtr<UFBCombatComponent> CombatComponent;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Boxer")
-	TObjectPtr<UStaticMeshComponent> PlaceholderBody;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Boxer")
-	TObjectPtr<UStaticMeshComponent> PlaceholderHead;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> HeadMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> TrunksMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> LeadGloveMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> RearGloveMesh;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float AccumulatedDamage = 0.f;
@@ -66,6 +95,10 @@ protected:
 	TArray<int32> AppliedAttackInstanceIds;
 
 	int32 LocalIntentSequence = 0;
+	float HitFlashTime = 0.f;
+
+	UPROPERTY()
+	TObjectPtr<AFBBroadcastCamera> PersonalOrbitCamera;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
@@ -85,6 +118,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
 	TObjectPtr<UInputAction> GuardAction;
 
+	UFUNCTION()
+	void OnRep_CornerSkin();
+
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void OnJab();
@@ -94,8 +130,10 @@ protected:
 
 	void SubmitLocalIntent(EFBAttackId Attack, bool bGuardHeld, EFBGuardState Guard);
 	AFBBoxerCharacter* FindOpponent() const;
-	class AFBBroadcastCamera* FindOrbitCamera() const;
+	AFBBroadcastCamera* FindOrbitCamera() const;
+	void EnsurePersonalCamera();
 	void FaceOpponent(float DeltaSeconds);
 	void EnsureRuntimeInput();
 	void ApplyMappingContext();
+	void TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color);
 };

@@ -25,6 +25,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Camera")
 	void ForcePossessedView();
 
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Camera")
+	void ForceViewForController(APlayerController* PC);
+
 	/** Right-stick / mouse look. X = orbit yaw, Y = pitch. */
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Camera")
 	void AddOrbitInput(FVector2D Axis);
@@ -69,10 +72,10 @@ protected:
 	float OrbitPitchSpeed = 55.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float MinPitch = 8.f;
+	float MinPitch = 12.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float MaxPitch = 42.f;
+	float MaxPitch = 55.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
 	float LocationInterpSpeed = 10.f;
@@ -91,7 +94,7 @@ protected:
 	float AutoAlignIdleDelay = 0.35f;
 
 	float OrbitYaw = -90.f;
-	float OrbitPitch = 18.f;
+	float OrbitPitch = 22.f;
 	float OrbitInputHoldTime = 0.f;
 	FVector2D PendingOrbitInput = FVector2D::ZeroVector;
 

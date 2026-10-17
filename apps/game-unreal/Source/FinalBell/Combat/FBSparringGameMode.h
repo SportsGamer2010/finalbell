@@ -1,4 +1,4 @@
-// Final Bell — three-round sparring flow + automated P1 arena
+// Final Bell — sparring flow + 1P AI or 2P human support
 #pragma once
 
 #include "CoreMinimal.h"
@@ -6,7 +6,6 @@
 #include "FBSparringGameMode.generated.h"
 
 class AFBBoxerCharacter;
-class AFBBroadcastCamera;
 
 UENUM(BlueprintType)
 enum class EFBBoutPhase : uint8
@@ -28,6 +27,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Bout")
@@ -49,13 +49,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Bout")
 	float RestDurationSeconds = 60.f;
 
-	/** When true, GameMode spawns floor/lights/ring/opponent/camera without a custom .umap. */
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|P1")
 	bool bAutoBuildP1Arena = true;
 
-	/** Auto-start the three-round clock after arena build (P1 convenience). */
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|P1")
 	bool bAutoStartBout = true;
+
+	/** Spawn an AI/dummy opponent only when fewer than 2 human players are present. */
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|P1")
+	bool bSpawnAiIfSolo = true;
 
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Bout")
 	EFBBoutPhase Phase = EFBBoutPhase::PreBout;
@@ -66,9 +68,11 @@ protected:
 	float PhaseTimeRemaining = 0.f;
 	bool bResultFinalized = false;
 	bool bArenaBuilt = false;
+	int32 NextStartIndex = 0;
 	FTimerHandle ArenaBuildTimer;
 
 	void AdvancePhase();
 	void FinalizeResultOnce();
 	void TryBuildArenaAndStart();
+	void PlaceFightersForMatch();
 };

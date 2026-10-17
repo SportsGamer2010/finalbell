@@ -6,6 +6,8 @@
 
 namespace
 {
+	constexpr float StickDeadZone = 0.38f;
+
 	UInputAction* MakeAction(UObject* Outer, const FName Name, EInputActionValueType Type)
 	{
 		UInputAction* Action = NewObject<UInputAction>(Outer, Name);
@@ -13,9 +15,22 @@ namespace
 		return Action;
 	}
 
-	void MapAxisKey(UInputMappingContext* IMC, UInputAction* Action, const FKey& Key, bool bSwizzleY, bool bNegate)
+	void AddRadialDeadZone(FEnhancedActionKeyMapping& Mapping, UObject* Outer, float Threshold = StickDeadZone)
+	{
+		UInputModifierDeadZone* DeadZone = NewObject<UInputModifierDeadZone>(Outer);
+		DeadZone->LowerThreshold = Threshold;
+		DeadZone->UpperThreshold = 1.f;
+		DeadZone->Type = EDeadZoneType::Radial;
+		Mapping.Modifiers.Add(DeadZone);
+	}
+
+	void MapAxisKey(UInputMappingContext* IMC, UInputAction* Action, const FKey& Key, bool bSwizzleY, bool bNegate, bool bApplyDeadZone)
 	{
 		FEnhancedActionKeyMapping& Mapping = IMC->MapKey(Action, Key);
+		if (bApplyDeadZone)
+		{
+			AddRadialDeadZone(Mapping, IMC);
+		}
 		if (bSwizzleY)
 		{
 			UInputModifierSwizzleAxis* Swizzle = NewObject<UInputModifierSwizzleAxis>(IMC);
@@ -44,25 +59,31 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	Bundle.Guard = MakeAction(Outer, TEXT("IA_FB_Guard"), EInputActionValueType::Boolean);
 	Bundle.MappingContext = NewObject<UInputMappingContext>(Outer, TEXT("IMC_FB_Boxer"));
 
-	// Keyboard WASD
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::W, true, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::S, true, true);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::D, false, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::A, false, true);
+	// Keyboard WASD (no stick deadzone)
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::W, true, false, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::S, true, true, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::D, false, false, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::A, false, true, false);
 
 	// Gamepad left stick + D-pad
-	Bundle.MappingContext->MapKey(Bundle.Move, EKeys::Gamepad_Left2D);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftY, true, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftX, false, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Up, true, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Down, true, true);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Right, false, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Left, false, true);
+	{
+		FEnhancedActionKeyMapping& Left2D = Bundle.MappingContext->MapKey(Bundle.Move, EKeys::Gamepad_Left2D);
+		AddRadialDeadZone(Left2D, Bundle.MappingContext);
+	}
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftY, true, false, true);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftX, false, false, true);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Up, true, false, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Down, true, true, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Right, false, false, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_DPad_Left, false, true, false);
 
 	// Orbit look: right stick + mouse + Q/E yaw
-	Bundle.MappingContext->MapKey(Bundle.Look, EKeys::Gamepad_Right2D);
-	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Gamepad_RightY, true, true); // invert pitch stick
-	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Gamepad_RightX, false, false);
+	{
+		FEnhancedActionKeyMapping& Right2D = Bundle.MappingContext->MapKey(Bundle.Look, EKeys::Gamepad_Right2D);
+		AddRadialDeadZone(Right2D, Bundle.MappingContext, 0.42f);
+	}
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Gamepad_RightY, true, true, true);
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Gamepad_RightX, false, false, true);
 	{
 		FEnhancedActionKeyMapping& Mouse = Bundle.MappingContext->MapKey(Bundle.Look, EKeys::Mouse2D);
 		if (UInputModifierScalar* Scalar = NewObject<UInputModifierScalar>(Bundle.MappingContext))
@@ -71,8 +92,8 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 			Mouse.Modifiers.Add(Scalar);
 		}
 	}
-	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::E, false, false);
-	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Q, false, true);
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::E, false, false, false);
+	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Q, false, true, false);
 
 	// Jab / Cross / Guard
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::LeftMouseButton);

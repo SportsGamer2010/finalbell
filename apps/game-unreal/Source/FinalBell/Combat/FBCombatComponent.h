@@ -1,4 +1,4 @@
-// Final Bell — server-owned stamina/contact stub for jab/cross/guard (P1)
+// Final Bell — server-owned stamina/contact for jab/cross/guard (P1)
 #pragma once
 
 #include "CoreMinimal.h"
@@ -7,6 +7,7 @@
 #include "FBCombatComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFBOnImpactResolved, const FFBImpactEvent&, Impact);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFBOnAttackPhaseChanged, EFBAttackPhase, Phase);
 
 UCLASS(ClassGroup = (FinalBell), meta = (BlueprintSpawnableComponent))
 class FINALBELL_API UFBCombatComponent : public UActorComponent
@@ -32,12 +33,23 @@ public:
 	EFBGuardState GetGuardState() const { return GuardState; }
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
-	bool IsAttackActive() const { return ActiveAttack != EFBAttackId::None && ActiveWindowRemaining > 0.f; }
+	EFBAttackId GetActiveAttack() const { return ActiveAttack; }
+
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
+	EFBAttackPhase GetAttackPhase() const { return AttackPhase; }
+
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
+	bool IsAttackCommitted() const { return AttackPhase != EFBAttackPhase::Idle; }
+
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
+	bool IsAttackActive() const { return AttackPhase == EFBAttackPhase::Active; }
 
 	UPROPERTY(BlueprintAssignable, Category = "FinalBell|Combat")
 	FFBOnImpactResolved OnImpactResolved;
 
-	/** Tunable costs — data-driven later; exposed for P1 playtest. */
+	UPROPERTY(BlueprintAssignable, Category = "FinalBell|Combat")
+	FFBOnAttackPhaseChanged OnAttackPhaseChanged;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float MaxBurstEnergy = 100.f;
 
@@ -54,13 +66,19 @@ public:
 	float CrossDamage = 12.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float MaxReachUU = 180.f;
+	float MaxReachUU = 200.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float ActiveWindowSeconds = 0.12f;
+	float MinReachUU = 60.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float RecoverySeconds = 0.25f;
+	float StartupSeconds = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float ActiveWindowSeconds = 0.10f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float RecoverySeconds = 0.22f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float EnergyRecoverPerSecond = 12.f;
@@ -68,30 +86,46 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float FatiguePerMiss = 1.5f;
 
+	/** Pending opponent used when startup completes (authority only). */
+	TWeakObjectPtr<AActor> PendingOpponent;
+
 protected:
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
+	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float BurstEnergy = 100.f;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float Fatigue = 0.f;
 
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
+	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	EFBGuardState GuardState = EFBGuardState::Open;
 
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
+	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	EFBAttackId ActiveAttack = EFBAttackId::None;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
+	EFBAttackPhase AttackPhase = EFBAttackPhase::Idle;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	int32 LastProcessedSequence = 0;
 
-	float ActiveWindowRemaining = 0.f;
-	float RecoveryRemaining = 0.f;
+	UPROPERTY(ReplicatedUsing = OnRep_LastImpact, BlueprintReadOnly, Category = "FinalBell|Combat")
+	FFBImpactEvent LastImpact;
+
+	float PhaseTimeRemaining = 0.f;
+	bool bResolvedThisAttack = false;
 	int32 NextAttackInstanceId = 1;
 	TSet<int32> ResolvedAttackInstanceIds;
+
+	UFUNCTION()
+	void OnRep_CombatVisual();
+
+	UFUNCTION()
+	void OnRep_LastImpact();
 
 	bool CanAfford(EFBAttackId Attack) const;
 	float CostFor(EFBAttackId Attack) const;
 	float DamageFor(EFBAttackId Attack) const;
-	void BeginAttack(EFBAttackId Attack);
+	void SetPhase(EFBAttackPhase NewPhase, float Duration);
+	void BeginAttack(EFBAttackId Attack, AActor* Opponent);
 	void ResolveAgainstOpponent(AActor* Opponent);
 };

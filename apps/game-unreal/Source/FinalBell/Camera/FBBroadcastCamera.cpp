@@ -3,6 +3,7 @@
 #include "Camera/CameraComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 
@@ -26,11 +27,26 @@ void AFBBroadcastCamera::BeginPlay()
 
 void AFBBroadcastCamera::ForcePossessedView()
 {
-	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+	APlayerController* PC = nullptr;
+	if (AFBBoxerCharacter* OwnerBoxer = Cast<AFBBoxerCharacter>(GetOwner()))
 	{
-		PC->SetViewTargetWithBlend(this, 0.f);
-		PC->bShowMouseCursor = false;
+		PC = Cast<APlayerController>(OwnerBoxer->GetController());
 	}
+	if (!PC)
+	{
+		PC = UGameplayStatics::GetPlayerController(this, 0);
+	}
+	ForceViewForController(PC);
+}
+
+void AFBBroadcastCamera::ForceViewForController(APlayerController* PC)
+{
+	if (!PC)
+	{
+		return;
+	}
+	PC->SetViewTargetWithBlend(this, 0.f);
+	PC->bShowMouseCursor = false;
 }
 
 void AFBBroadcastCamera::SetFighters(AFBBoxerCharacter* Player, AFBBoxerCharacter* Opponent)
@@ -144,9 +160,15 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 	float Distance = BaseDistance;
 	ResolveFocus(Focus, Distance);
 
-	const FRotator OrbitRot(OrbitPitch, OrbitYaw, 0.f);
+	// Positive OrbitPitch = camera elevated above the ring looking down.
+	// FRotator pitch is opposite (positive looks up), so negate for placement.
+	const FRotator OrbitRot(-OrbitPitch, OrbitYaw, 0.f);
 	const FVector DesiredLocation = Focus - OrbitRot.Vector() * Distance;
-	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), DesiredLocation, DeltaSeconds, LocationInterpSpeed);
+	const FVector SafeLocation(
+		DesiredLocation.X,
+		DesiredLocation.Y,
+		FMath::Max(DesiredLocation.Z, Focus.Z + 80.f));
+	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), SafeLocation, DeltaSeconds, LocationInterpSpeed);
 	SetActorLocation(NewLocation);
 
 	const FRotator DesiredLook = UKismetMathLibrary::FindLookAtRotation(NewLocation, Focus);
