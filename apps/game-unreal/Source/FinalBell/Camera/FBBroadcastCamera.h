@@ -23,6 +23,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Camera")
 	void SetFighters(AFBBoxerCharacter* A, AFBBoxerCharacter* B);
 
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Camera")
+	void ForcePossessedView();
+
 protected:
 	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Camera")
 	TObjectPtr<USceneComponent> Root;

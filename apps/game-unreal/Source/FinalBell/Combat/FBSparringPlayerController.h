@@ -11,4 +11,6 @@ class FINALBELL_API AFBSparringPlayerController : public APlayerController
 
 public:
 	AFBSparringPlayerController();
+
+	virtual void BeginPlay() override;
 };

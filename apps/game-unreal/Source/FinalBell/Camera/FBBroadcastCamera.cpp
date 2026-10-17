@@ -13,7 +13,7 @@ AFBBroadcastCamera::AFBBroadcastCamera()
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(Root);
-	SpringArm->TargetArmLength = 600.f;
+	SpringArm->TargetArmLength = 0.f;
 	SpringArm->bDoCollisionTest = false;
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
@@ -24,10 +24,15 @@ void AFBBroadcastCamera::BeginPlay()
 {
 	Super::BeginPlay();
 	AutoFindFighters();
+	ForcePossessedView();
+}
 
+void AFBBroadcastCamera::ForcePossessedView()
+{
 	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
 	{
 		PC->SetViewTargetWithBlend(this, 0.f);
+		PC->bShowMouseCursor = false;
 	}
 }
 
@@ -35,6 +40,7 @@ void AFBBroadcastCamera::SetFighters(AFBBoxerCharacter* A, AFBBoxerCharacter* B)
 {
 	FighterA = A;
 	FighterB = B;
+	ForcePossessedView();
 }
 
 void AFBBroadcastCamera::AutoFindFighters()
@@ -69,16 +75,12 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 
 	const FVector LocA = FighterA->GetActorLocation();
 	const FVector LocB = FighterB.IsValid() ? FighterB->GetActorLocation() : LocA + FVector(200.f, 0.f, 0.f);
-	const FVector Mid = (LocA + LocB) * 0.5f + FVector(0.f, 0.f, HeightOffset);
-	const float Separation = FVector::Dist(LocA, LocB);
-	SpringArm->TargetArmLength = FMath::Clamp(Separation + DistancePadding, 450.f, 1200.f);
+	const FVector Focus = (LocA + LocB) * 0.5f + FVector(0.f, 0.f, 80.f);
 
-	const FVector NewLoc = FMath::VInterpTo(GetActorLocation(), Mid, DeltaSeconds, InterpSpeed);
-	SetActorLocation(NewLoc);
+	// Sideline seat: offset on +Y, raised, looking at the fighters.
+	const FVector Desired = Focus + FVector(0.f, -DistancePadding - 200.f, HeightOffset);
+	SetActorLocation(FMath::VInterpTo(GetActorLocation(), Desired, DeltaSeconds, InterpSpeed));
 
-	const FVector LookDir = ((LocA + LocB) * 0.5f - NewLoc).GetSafeNormal();
-	if (!LookDir.IsNearlyZero())
-	{
-		SetActorRotation(LookDir.Rotation());
-	}
+	const FRotator LookAt = (Focus - GetActorLocation()).Rotation();
+	SetActorRotation(FMath::RInterpTo(GetActorRotation(), LookAt, DeltaSeconds, InterpSpeed));
 }

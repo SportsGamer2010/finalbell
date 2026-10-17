@@ -7,8 +7,7 @@
 #include "FBBoxerCharacter.generated.h"
 
 class UFBCombatComponent;
-class USpringArmComponent;
-class UCameraComponent;
+class UStaticMeshComponent;
 class UInputMappingContext;
 class UInputAction;
 struct FInputActionValue;
@@ -45,9 +44,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer")
 	float MoveSpeedScale = 1.f;
 
+	/** Temporary colored body so P1 is visible without authored fighter meshes. */
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
+	void ApplyPlaceholderAppearance(bool bIsOpponent);
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Combat")
 	TObjectPtr<UFBCombatComponent> CombatComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Boxer")
+	TObjectPtr<UStaticMeshComponent> PlaceholderBody;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Boxer")
+	TObjectPtr<UStaticMeshComponent> PlaceholderHead;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float AccumulatedDamage = 0.f;

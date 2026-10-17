@@ -2,13 +2,18 @@
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBCombatComponent.h"
 #include "Input/FBRuntimeInputLibrary.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "Net/UnrealNetwork.h"
 #include "EngineUtils.h"
 #include "InputActionValue.h"
+#include "UObject/ConstructorHelpers.h"
 
 AFBBoxerCharacter::AFBBoxerCharacter()
 {
@@ -17,9 +22,60 @@ AFBBoxerCharacter::AFBBoxerCharacter()
 
 	GetCharacterMovement()->bOrientRotationToMovement = false;
 	GetCharacterMovement()->MaxWalkSpeed = 320.f;
-	bUseControllerRotationYaw = true;
+	bUseControllerRotationYaw = false;
 
 	CombatComponent = CreateDefaultSubobject<UFBCombatComponent>(TEXT("CombatComponent"));
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CapsuleMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+
+	PlaceholderBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderBody"));
+	PlaceholderBody->SetupAttachment(GetCapsuleComponent());
+	PlaceholderBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PlaceholderBody->SetRelativeLocation(FVector(0.f, 0.f, -40.f));
+	PlaceholderBody->SetRelativeScale3D(FVector(0.55f, 0.55f, 1.1f));
+	if (CapsuleMesh.Succeeded())
+	{
+		PlaceholderBody->SetStaticMesh(CapsuleMesh.Object);
+	}
+
+	PlaceholderHead = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PlaceholderHead"));
+	PlaceholderHead->SetupAttachment(PlaceholderBody);
+	PlaceholderHead->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PlaceholderHead->SetRelativeLocation(FVector(0.f, 0.f, 70.f));
+	PlaceholderHead->SetRelativeScale3D(FVector(0.55f, 0.55f, 0.45f));
+	if (SphereMesh.Succeeded())
+	{
+		PlaceholderHead->SetStaticMesh(SphereMesh.Object);
+	}
+}
+
+void AFBBoxerCharacter::ApplyPlaceholderAppearance(bool bIsOpponent)
+{
+	const FLinearColor Color = bIsOpponent
+		? FLinearColor(0.85f, 0.15f, 0.12f)   // red corner
+		: FLinearColor(0.15f, 0.35f, 0.95f);  // blue corner
+
+	auto Tint = [Color](UStaticMeshComponent* MeshComp)
+	{
+		if (!MeshComp)
+		{
+			return;
+		}
+		UMaterialInterface* Base = MeshComp->GetMaterial(0);
+		if (!Base)
+		{
+			Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+		}
+		if (UMaterialInstanceDynamic* MID = MeshComp->CreateAndSetMaterialInstanceDynamicFromMaterial(0, Base))
+		{
+			MID->SetVectorParameterValue(TEXT("Color"), Color);
+			MID->SetVectorParameterValue(TEXT("BaseColor"), Color);
+		}
+	};
+
+	Tint(PlaceholderBody);
+	Tint(PlaceholderHead);
 }
 
 void AFBBoxerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

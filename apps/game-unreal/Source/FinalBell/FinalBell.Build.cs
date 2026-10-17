@@ -20,6 +20,8 @@ public class FinalBell : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
+			"ApplicationCore",
+			"GameInputBase",
 			"UMG",
 			"GameplayTags",
 			"GameplayAbilities",

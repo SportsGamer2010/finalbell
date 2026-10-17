@@ -47,6 +47,11 @@ void AFBSparringGameMode::TryBuildArenaAndStart()
 	UFBP1ArenaBootstrap::EnsureArena(GetWorld(), Player, Opponent, Camera);
 	bArenaBuilt = (Player != nullptr || Opponent != nullptr);
 
+	if (Camera)
+	{
+		Camera->ForcePossessedView();
+	}
+
 	if (bAutoStartBout && Phase == EFBBoutPhase::PreBout)
 	{
 		StartBout();
