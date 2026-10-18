@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "id": "create-boxer",
+      "title": "Fighter specification and scale proxy",
+      "patterns": ["boxer", "fighter", "heavyweight", "middleweight", "lightweight", "meta ?human"],
+      "tools": ["fighter JSON generator", "Blender scale proxy when installed", "MetaHuman manual authoring"],
+      "writes": ["Tools/AI/output/fighters"],
+      "preserves": ["apps/game-unreal/Content", "apps/game-unreal/Source"]
+    },
+    {
+      "id": "textures",
+      "title": "Texture and cosmetic damage handoff",
+      "patterns": ["texture", "bruise", "bruising", "sweat", "swelling", "facial damage", "portrait", "logo", "adobe"],
+      "tools": ["Tools/Adobe inbox", "Unreal material parameters later"],
+      "writes": ["Tools/Adobe/outbox", "Tools/AI/output/textures"]
+    },
+    {
+      "id": "animation",
+      "title": "Motion inbox, naming, and cleanup",
+      "patterns": ["animation", "deepmotion", "rokoko", "motion capture", "retarget", "knockout replay", "punch"],
+      "tools": ["Tools/Animation/incoming", "Blender cleanup", "Unreal retarget manual"],
+      "writes": ["Tools/AI/output/animation"]
+    },
+    {
+      "id": "ui-spec",
+      "title": "UMG layout specification",
+      "patterns": ["menu", "dashboard", "hud", "umg", "figma", "career mode", "rankings", "tale of the tape", "widget"],
+      "tools": ["local design system", "Figma when FIGMA_ACCESS_TOKEN is set"],
+      "writes": ["Tools/AI/output/ui"]
+    },
+    {
+      "id": "gameplay",
+      "title": "Inspect existing C++ combat systems",
+      "patterns": ["rotation", "footwork", "camera", "punch", "counter", "defense", "slip", "parry", "duck", "block", "stamina", "knockout", "multiplayer", "replication", "mechanic", "implement", "fix"],
+      "tools": ["Cursor", "existing FinalBell C++"],
+      "writes": []
+    },
+    {
+      "id": "github",
+      "title": "GitHub collaboration status",
+      "patterns": ["github", "pull request", "commit", "collaborate"],
+      "tools": ["git", "GitHub CLI"],
+      "writes": []
+    },
+    {
+      "id": "linear",
+      "title": "Linear workstream plan",
+      "patterns": ["linear", "ticket", "issue", "task"],
+      "tools": ["Linear API when LINEAR_API_KEY is set"],
+      "writes": []
+    },
+    {
+      "id": "huggingface",
+      "title": "Model search without downloads",
+      "patterns": ["hugging face", "huggingface", "model"],
+      "tools": ["Hugging Face public API"],
+      "writes": ["Tools/AI/output/models"]
+    },
+    {
+      "id": "debug",
+      "title": "Log and test guidance",
+      "patterns": ["debug", "crash", "log", "assert"],
+      "tools": ["Unreal Saved/Logs", "orchestrator check"],
+      "writes": []
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+name: Validate contracts and toolchain
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+      - develop
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Toolchain tests
+        run: python -m unittest discover -s Tools/AI/tests -v
+      - name: Orchestrator invariants
+        run: python Tools/AI/scripts/fb_orchestrator.py check --skip-external
+      - name: Contract tests
+        run: |
+          python -m pip install pytest==8.3.5 jsonschema==4.23.0
+          python -m pytest tests/golden -q
+        env:
+          PYTHONPATH: packages/domain-python

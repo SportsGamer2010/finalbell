@@ -1,0 +1,15 @@
+{
+  "screens": {
+    "main-menu": ["title", "spar", "training", "career", "records"],
+    "fighter-creation": ["weight class", "stance", "appearance summary", "confirm"],
+    "fighter-selection": ["roster cards", "stance", "height", "reach"],
+    "training-mode": ["drill", "round clock", "feedback"],
+    "career-mode": ["next fight", "record", "readiness", "rank explanation"],
+    "rankings": ["division", "merit list", "movement note"],
+    "tale-of-the-tape": ["names", "stance", "height", "reach", "record"],
+    "hud": ["blue health", "red health", "stamina", "round"],
+    "fight-results": ["winner", "method", "scorecards"],
+    "career-records": ["wins", "losses", "draws", "kos"],
+    "fight-history": ["date", "opponent", "result", "replay link"]
+  }
+}

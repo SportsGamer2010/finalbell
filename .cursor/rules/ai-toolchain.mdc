@@ -1,0 +1,17 @@
+---
+description: Route Final Bell requests through the local automation toolchain.
+alwaysApply: true
+---
+
+# Final Bell tool routing
+
+- This is a production Unreal Engine 5.8 boxing project. Frame-critical combat stays in the FinalBell C++ module.
+- Before choosing a tool, run `python Tools/AI/scripts/fb_orchestrator.py route "<request>"` when Python is available. Use the primary workflow and read the other matches.
+- Fighter creation writes specification JSON under `Tools/AI/output/fighters`. MetaHuman and Blender proxies are previews until they pass the fighter validator. Do not import them over the live mannequin.
+- Animation files enter through `Tools/Animation/incoming` and use `FB_Scope_Category_Action_Variant` names. DeepMotion and Rokoko are export handoffs, not installed plugins.
+- UI requests start from `Tools/AI/config/design_system.json` and `ui-spec`. A Figma call requires `FIGMA_ACCESS_TOKEN`. Do not claim a Widget Blueprint exists unless it is in the project.
+- Texture requests use `Tools/Adobe/inbox`. Cosmetic sweat, bruising, swelling, and cuts stay separate from server damage.
+- GitHub and Linear calls happen only when `gh` is authenticated or `LINEAR_API_KEY` is set. Never invent an issue, pull request, or review result.
+- Hugging Face search must not download weights. Generated files stay out of `apps/game-unreal/Content` until a person accepts them.
+- Do not add paid software, plugins, or accounts without an explicit yes.
+- The orchestrator log is `Tools/AI/logs/orchestrator.jsonl`.

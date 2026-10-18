@@ -39,3 +39,21 @@ docs/_last_build.log
 .env
 .env.*
 !.env.example
+
+# Local packaged client archives
+apps/game-unreal/Packaged/
+
+# AI toolchain output, handoff drops, and secrets
+Tools/AI/logs/**
+!Tools/AI/logs/.gitkeep
+Tools/AI/output/**
+!Tools/AI/output/.gitkeep
+Tools/Adobe/inbox/**
+!Tools/Adobe/inbox/.gitkeep
+Tools/Adobe/outbox/**
+!Tools/Adobe/outbox/.gitkeep
+Tools/Animation/incoming/**
+!Tools/Animation/incoming/.gitkeep
+Tools/Animation/manifests/**
+!Tools/Animation/manifests/.gitkeep
+

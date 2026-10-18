@@ -1,0 +1,23 @@
+{
+  "name": "Final Bell broadcast",
+  "source": "local-specification",
+  "figma_file": null,
+  "colors": {
+    "canvas": "#121418",
+    "panel": "#1C2128",
+    "text": "#F4F1EA",
+    "muted": "#A7A094",
+    "blue_corner": "#1F4B99",
+    "red_corner": "#8E2A2A",
+    "stamina": "#D6A03C",
+    "danger": "#C4493A",
+    "line": "#3A342C"
+  },
+  "type": {
+    "display": "Oswald",
+    "body": "Source Sans 3",
+    "fallback": "project UMG font until those families are imported"
+  },
+  "spacing": [4, 8, 12, 16, 24, 32],
+  "radius": 2
+}

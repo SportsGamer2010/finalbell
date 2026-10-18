@@ -1,0 +1,40 @@
+{
+  "pattern": "FB_{Scope}_{Category}_{Action}_{Variant}",
+  "example": "FB_Shared_Punch_Jab_01",
+  "scopes": ["Shared", "LW", "MW", "HW"],
+  "categories": {
+    "Move": ["Fwd", "Bwd", "LateralL", "LateralR", "PivotL", "PivotR", "CircleL", "CircleR", "StanceShift"],
+    "Punch": ["Jab", "Cross", "LeadHook", "RearHook", "LeadUppercut", "RearUppercut", "BodyJab", "BodyCross", "ComboJabCross"],
+    "Defense": ["HighGuard", "Block", "Parry", "SlipL", "SlipR", "Duck", "Weave", "Pullback", "Counter"],
+    "React": ["HeadImpact", "BodyImpact", "Stagger", "Knockdown", "Recovery", "Knockout"]
+  },
+  "priority": [
+    "FB_Shared_Move_Fwd_01",
+    "FB_Shared_Move_Bwd_01",
+    "FB_Shared_Move_LateralL_01",
+    "FB_Shared_Move_LateralR_01",
+    "FB_Shared_Move_PivotL_01",
+    "FB_Shared_Move_PivotR_01",
+    "FB_Shared_Move_CircleL_01",
+    "FB_Shared_Move_CircleR_01",
+    "FB_Shared_Punch_Jab_01",
+    "FB_Shared_Punch_Cross_01",
+    "FB_Shared_Punch_LeadHook_01",
+    "FB_Shared_Punch_RearHook_01",
+    "FB_Shared_Punch_LeadUppercut_01",
+    "FB_Shared_Punch_RearUppercut_01",
+    "FB_Shared_Defense_HighGuard_01",
+    "FB_Shared_Defense_SlipL_01",
+    "FB_Shared_Defense_SlipR_01",
+    "FB_Shared_Defense_Duck_01",
+    "FB_Shared_Defense_Parry_01",
+    "FB_Shared_React_HeadImpact_01",
+    "FB_Shared_React_Knockdown_01",
+    "FB_Shared_React_Knockout_01"
+  ],
+  "notes": [
+    "Punch tokens match EFBAttackId names already used by AFBBoxerCharacter.",
+    "AI-generated clips stay in Tools/Animation/incoming until this name check and a skeleton check pass.",
+    "Foot contact, weight transfer, and transition quality are manual review gates."
+  ]
+}

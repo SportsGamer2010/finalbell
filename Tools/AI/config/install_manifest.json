@@ -1,0 +1,34 @@
+{
+  "free_packages": [
+    {
+      "id": "GitHub.cli",
+      "command": "gh",
+      "scope": "user",
+      "purpose": "GitHub automation"
+    },
+    {
+      "id": "Python.Python.3.12",
+      "command": "python",
+      "scope": "user",
+      "purpose": "Scripts, validation, and asset processing"
+    },
+    {
+      "id": "BlenderFoundation.Blender.LTS.4.5",
+      "command": "blender",
+      "scope": "user",
+      "purpose": "Headless mesh, material, and FBX processing. 4.5 LTS is pinned instead of current Blender."
+    },
+    {
+      "id": "Gyan.FFmpeg",
+      "command": "ffmpeg",
+      "scope": "user",
+      "purpose": "Animation reference video"
+    },
+    {
+      "id": "OpenJS.NodeJS.22",
+      "command": "node",
+      "scope": "user",
+      "purpose": "LTS Node for future MCP or API tooling. Node 22 is pinned."
+    }
+  ]
+}

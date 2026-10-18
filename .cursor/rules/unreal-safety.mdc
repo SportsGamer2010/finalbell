@@ -1,0 +1,17 @@
+---
+description: Preserve working Final Bell combat, ring, and camera code.
+alwaysApply: true
+---
+
+# Unreal safety
+
+- Inspect the current C++ before editing it. Reuse `AFBBoxerCharacter`, `UFBCombatComponent`, `AFBBroadcastCamera`, `UFBP1ArenaBootstrap`, and `AFBRingBounds` instead of replacing them.
+- `scripts/create_ring_map.py` deletes `/Game/Maps/Ring_P1`. Do not run it unless a rebuild of that map was requested.
+- Prefer data in config or fighter specs over new hardcoded fighter attributes. Appearance must not change competitive hitboxes.
+- Use C++ for authority, replication, and per-frame combat. Use Blueprints or UMG when a designer needs to iterate on presentation.
+- Keep generated files under `Tools/` distinguishable from authored Content. Names that start with `FB_GEN_` are generated.
+- Do not claim an Unreal build succeeded unless `Build.bat` or the editor compile finished in this session and the result line was Succeeded.
+- Do not claim a mechanic works without a test, a build, or an honest statement that play was not run.
+- Ask before deleting branches, rewriting history, pushing, buying assets, changing credentials, or enabling a plugin in `FinalBell.uproject`.
+- Record a non-obvious structural choice in `docs/DecisionLog.md` when the change is more than a local fix.
+- Two people share this repo: one owner and one reviewer. Do not edit the same binary asset at the same time.

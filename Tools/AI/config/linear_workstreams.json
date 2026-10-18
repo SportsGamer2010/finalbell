@@ -1,0 +1,96 @@
+{
+  "idempotency": "Issue titles are the identity. Do not create a second issue with the same title.",
+  "apply": "Requires LINEAR_API_KEY and an explicit apply command. Loading this file does not call Linear.",
+  "workstreams": [
+    {
+      "name": "Core Movement",
+      "tasks": [
+        {
+          "title": "FB movement: keep opponent-facing footwork inside the ring",
+          "acceptance": "Orthodox and southpaw still face the opponent, lateral input uses the actor yaw, and AFBRingBounds clamps the body. Existing camera framing stays."
+        }
+      ]
+    },
+    {
+      "name": "Combat and Defense",
+      "tasks": [
+        {
+          "title": "FB combat: slip, duck, parry, and counter windows",
+          "acceptance": "Defense changes server-owned contact results. A missed punch can be punished. Clients still submit intents only."
+        }
+      ]
+    },
+    {
+      "name": "Fighter Creation",
+      "tasks": [
+        {
+          "title": "FB fighters: three weight-class presentation specs",
+          "acceptance": "Lightweight, middleweight, and heavyweight specs validate, and hitboxes remain the canonical class capsule."
+        }
+      ]
+    },
+    {
+      "name": "Animation",
+      "tasks": [
+        {
+          "title": "FB animation: named inbox and retarget review",
+          "acceptance": "Clips use the FB_Scope_Category_Action_Variant names and fail validation until the skeleton and foot contact are reviewed."
+        }
+      ]
+    },
+    {
+      "name": "Damage and Visual Effects",
+      "tasks": [
+        {
+          "title": "FB damage: cosmetic bruising separate from authoritative health",
+          "acceptance": "Sweat, bruise, swelling, and cut parameters do not decide knockdowns or wins."
+        }
+      ]
+    },
+    {
+      "name": "Multiplayer",
+      "tasks": [
+        {
+          "title": "FB net: two-client authoritative sparring smoke test",
+          "acceptance": "A listen server and one client exchange intents. The server owns hits. No public ranked service."
+        }
+      ]
+    },
+    {
+      "name": "Training Mode",
+      "tasks": [
+        {
+          "title": "FB training: heavy bag preserves the sparring roster",
+          "acceptance": "Bag drills do not delete ring fighters or rewrite the broadcast camera."
+        }
+      ]
+    },
+    {
+      "name": "Career Mode",
+      "tasks": [
+        {
+          "title": "FB career: records stay out of official ranked state",
+          "acceptance": "Offline career results do not write player MMR or title eligibility."
+        }
+      ]
+    },
+    {
+      "name": "User Interface",
+      "tasks": [
+        {
+          "title": "FB UI: career menu from the local layout spec",
+          "acceptance": "UMG uses the broadcast colors and spacing. Figma is linked only after a file key exists."
+        }
+      ]
+    },
+    {
+      "name": "Testing and Performance",
+      "tasks": [
+        {
+          "title": "FB tests: contract suite and editor build evidence",
+          "acceptance": "pytest for the golden contracts is recorded, and a gameplay claim cites a real FinalBellEditor build or an honest blocker."
+        }
+      ]
+    }
+  ]
+}

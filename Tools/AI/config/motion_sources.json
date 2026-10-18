@@ -1,0 +1,21 @@
+{
+  "deepmotion": {
+    "installed": false,
+    "export": ["fbx", "bvh"],
+    "inbox": "Tools/Animation/incoming",
+    "notes": "Export a clip, drop it in the inbox, then run the animation manifest and Blender cleanup. Do not treat the clip as production-ready."
+  },
+  "rokoko": {
+    "installed": false,
+    "engine_plugin_present": false,
+    "export": ["fbx"],
+    "inbox": "Tools/Animation/incoming",
+    "notes": "No Rokoko plugin was found under the UE 5.8 engine plugins directory. Use FBX import and retarget to SK_Mannequin."
+  },
+  "unreal": {
+    "skeleton": "/Game/Mannequins/Meshes/SK_Mannequin",
+    "current_pose_path": "AFBBoxerCharacter::ApplySkinnedPose writes guard and six punches in code. There is no boxing AnimSequence yet.",
+    "preview_script": "Tools/Unreal/create_anim_preview_level.py",
+    "preview_map": "/Game/Maps/AnimPreview_Sandbox"
+  }
+}

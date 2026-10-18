@@ -1,0 +1,15 @@
+{
+  "engine": "5.8.3",
+  "installed_plugin_dirs": [
+    "Engine/Plugins/MetaHuman/MetaHumanCharacter",
+    "Engine/Plugins/MetaHuman/MetaHumanAnimator"
+  ],
+  "project_plugin_enabled": false,
+  "reason": "MetaHumanCharacter is installed with UE 5.8 and left disabled in FinalBell.uproject so the current ring, controls, and camera keep loading without a plugin compile.",
+  "enable_when_authoring": "MetaHumanCharacter",
+  "limits": [
+    "MetaHuman does not supply boxing proportions, gloves, trunks, or combat animation.",
+    "Appearance scale is presentation only. Competitive hitboxes stay on the canonical class capsule.",
+    "Retarget any MetaHuman body onto the project mannequin skeleton before it can use the current pose code."
+  ]
+}

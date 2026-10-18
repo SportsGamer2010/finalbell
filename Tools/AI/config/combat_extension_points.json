@@ -1,0 +1,50 @@
+{
+  "preserve": [
+    "UFBP1ArenaBootstrap builds the working ring, lights, bounds, opponent, and camera.",
+    "AFBBroadcastCamera is the ringside camera. Do not replace it with a follow camera.",
+    "AFBBoxerCharacter::UpdateFacingOffset and the movement input in that class own rotation and footwork.",
+    "scripts/create_ring_map.py deletes /Game/Maps/Ring_P1 before recreating it. Do not run it unless that rebuild was requested."
+  ],
+  "movement": {
+    "files": [
+      "apps/game-unreal/Source/FinalBell/Combat/FBBoxerCharacter.h",
+      "apps/game-unreal/Source/FinalBell/Combat/FBBoxerCharacter.cpp"
+    ],
+    "symbols": ["UpdateFacingOffset", "FaceTurnSpeed", "MaxFacingOffsetDegrees", "AddMovementInput"]
+  },
+  "camera": {
+    "files": [
+      "apps/game-unreal/Source/FinalBell/Camera/FBBroadcastCamera.h",
+      "apps/game-unreal/Source/FinalBell/Camera/FBBroadcastCamera.cpp"
+    ],
+    "symbols": ["ComputeFrame", "AddOrbitInput", "FightFOV"]
+  },
+  "ring": {
+    "files": [
+      "apps/game-unreal/Source/FinalBell/Ring/FBP1ArenaBootstrap.cpp",
+      "apps/game-unreal/Source/FinalBell/Ring/FBRingBounds.cpp"
+    ],
+    "symbols": ["EnsureArena", "ClampToRing"]
+  },
+  "punching": {
+    "files": [
+      "apps/game-unreal/Source/FinalBell/Combat/FBCombatComponent.cpp",
+      "apps/game-unreal/Source/FinalBell/Combat/FBCombatTypes.h"
+    ],
+    "attacks": ["Jab", "Cross", "LeadHook", "RearHook", "LeadUppercut", "RearUppercut"],
+    "authority": "ServerSubmitCombatIntent. Clients do not send damage or wins."
+  },
+  "defense": {
+    "existing": ["High guard", "weave", "hook facing lock", "created-angle damage window"],
+    "files": ["apps/game-unreal/Source/FinalBell/Combat/FBBoxerCharacter.cpp"]
+  },
+  "network": {
+    "files": [
+      "apps/game-unreal/Source/FinalBell/Network/FBPrivateRoomSubsystem.cpp",
+      "apps/game-unreal/Source/FinalBell/Session/FBSessionSubsystem.cpp"
+    ]
+  },
+  "training": {
+    "files": ["apps/game-unreal/Source/FinalBell/Training/FBHeavyBag.cpp"]
+  }
+}

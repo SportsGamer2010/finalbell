@@ -1,0 +1,41 @@
+{
+  "reference_height_cm": 180,
+  "hitbox_policy": "canonical_class_capsule",
+  "classes": {
+    "lightweight": {
+      "code": "lw",
+      "height_cm": [165, 175],
+      "reach_cm": [165, 180],
+      "shoulder_width_cm": [42, 48],
+      "muscle_mass": [0.35, 0.62],
+      "glove_oz": 10,
+      "body_types": ["lean", "athletic", "long-limbed"]
+    },
+    "middleweight": {
+      "code": "mw",
+      "height_cm": [175, 185],
+      "reach_cm": [175, 190],
+      "shoulder_width_cm": [46, 52],
+      "muscle_mass": [0.45, 0.75],
+      "glove_oz": 10,
+      "body_types": ["athletic", "compact", "thick"]
+    },
+    "heavyweight": {
+      "code": "hw",
+      "height_cm": [185, 201],
+      "reach_cm": [188, 213],
+      "shoulder_width_cm": [50, 58],
+      "muscle_mass": [0.55, 0.9],
+      "glove_oz": 10,
+      "body_types": ["thick", "long-limbed", "athletic"]
+    }
+  },
+  "styles": {
+    "fast-hands": {"hand_speed": 0.86, "power": 0.4, "defense": 0.58},
+    "out-boxer": {"hand_speed": 0.72, "power": 0.48, "defense": 0.7},
+    "pressure": {"hand_speed": 0.66, "power": 0.7, "defense": 0.5},
+    "counterpuncher": {"hand_speed": 0.7, "power": 0.62, "defense": 0.8},
+    "slugger": {"hand_speed": 0.48, "power": 0.88, "defense": 0.36},
+    "boxer-puncher": {"hand_speed": 0.64, "power": 0.66, "defense": 0.6}
+  }
+}
