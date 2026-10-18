@@ -1,4 +1,7 @@
-// Final Bell — boxer with basic skin, punch presentation, opponent-facing footwork
+﻿// Final Bell — the fighter you control.
+// The body you see is built from simple shapes (head, torso, arms, legs, gloves).
+// The skeletal mannequin is hidden so it cannot stand in the ring as an extra person.
+// Punches are requests. The server decides whether they land.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -8,6 +11,7 @@
 
 class UFBCombatComponent;
 class UStaticMeshComponent;
+class USkeletalMesh;
 class UInputMappingContext;
 class UInputAction;
 class AFBBroadcastCamera;
@@ -50,9 +54,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
 	void HandleImpactPresentation(const FFBImpactEvent& Impact);
 
-	/** Compatibility with older arena bootstrap calls. */
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Boxer")
 	void ApplyPlaceholderAppearance(bool bIsOpponent);
+
+	/** World-space capsule half height, including body scale. Use this as spawn Z. */
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Boxer")
+	float GetStandingHalfHeight() const;
+
+	/** Damage multiplier while this fighter holds an angle they just created. */
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Boxer")
+	float GetAnglePowerMultiplier() const;
+
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Boxer")
+	bool IsHookFacingLocked() const;
+
+	/** Direction the hook was thrown, held through a slip. */
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Boxer")
+	FVector GetHookLockDirection() const;
+
+	/** Punch volume overlaps the target. Bodies also block each other via the capsule. */
+	bool DoesPunchConnect(EFBAttackId Attack, AActor* Target) const;
+
+	void BeginHookFacingLock(float Seconds);
+	void ExtendHookFacingLock(float Seconds);
+	void GrantCreatedAngle(float Seconds);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "FinalBell|Boxer")
 	EFBStance Stance = EFBStance::Orthodox;
@@ -68,6 +93,18 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer")
 	float PunchLockedTurnSpeed = 1.5f;
+
+	/** Largest angle off the opponent the stick can hold. They cannot turn their back. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer", meta = (ClampMin = "0.0", ClampMax = "70.0"))
+	float MaxFacingOffsetDegrees = 50.f;
+
+	/** Heavyweight scale on the 180cm mannequin. 1.10 is about 6'6", in the Wilder range. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer", meta = (ClampMin = "1.0", ClampMax = "1.6"))
+	float BodyScale = 1.10f;
+
+	/** Extra damage while the angle window from slipping a hook is open. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer", meta = (ClampMin = "1.0", ClampMax = "2.5"))
+	float AnglePowerMultiplier = 1.5f;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Combat")
@@ -88,6 +125,45 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
 	TObjectPtr<UStaticMeshComponent> RearGloveMesh;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> LeadUpperArmMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> LeadForearmMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> RearUpperArmMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> RearForearmMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> LeadThighMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> LeadShinMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> RearThighMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> RearShinMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> LeadShoeMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UStaticMeshComponent> RearShoeMesh;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Skin")
+	TObjectPtr<USkeletalMesh> MannyMesh;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Skin")
+	TObjectPtr<USkeletalMesh> QuinnMesh;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Skin")
+	TSubclassOf<UAnimInstance> UnarmedAnimClass;
+
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float AccumulatedDamage = 0.f;
 
@@ -96,6 +172,26 @@ protected:
 
 	int32 LocalIntentSequence = 0;
 	float HitFlashTime = 0.f;
+	bool bUsingMannequin = false;
+	bool bBodyModifierHeld = false;
+	bool bPowerModifierHeld = false;
+	float PunchStickCooldown = 0.f;
+	float FacingYawOffset = 0.f;
+	float FacingYawOffsetTarget = 0.f;
+	float LastSentFacingOffset = 0.f;
+	bool bPunchStickConsumed = false;
+	float PunchPoseAlpha = 0.f;
+	EFBAttackId DisplayAttack = EFBAttackId::None;
+	bool bDisplayBody = false;
+
+	UPROPERTY(Replicated)
+	float FacingLockYaw = 0.f;
+
+	UPROPERTY(Replicated)
+	float FacingLockServerEndTime = -1.f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_AngleBonus)
+	float AngleBonusServerEndTime = -1.f;
 
 	UPROPERTY()
 	TObjectPtr<AFBBroadcastCamera> PersonalOrbitCamera;
@@ -110,30 +206,89 @@ protected:
 	TObjectPtr<UInputAction> LookAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> PunchStickAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> TurnAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
 	TObjectPtr<UInputAction> JabAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
 	TObjectPtr<UInputAction> CrossAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
-	TObjectPtr<UInputAction> GuardAction;
+	TObjectPtr<UInputAction> LeadHookAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> RearHookAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> LeadUppercutAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> RearUppercutAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> BlockAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> WeaveAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> BodyModAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Input")
+	TObjectPtr<UInputAction> PowerModAction;
 
 	UFUNCTION()
 	void OnRep_CornerSkin();
 
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
+	void OnPunchStick(const FInputActionValue& Value);
+	void OnPunchStickReleased();
+	void OnTurnStick(const FInputActionValue& Value);
+	void OnTurnStickReleased();
 	void OnJab();
 	void OnCross();
-	void OnGuardStarted();
-	void OnGuardCompleted();
+	void OnLeadHook();
+	void OnRearHook();
+	void OnLeadUppercut();
+	void OnRearUppercut();
+	void OnBlockStarted();
+	void OnBlockCompleted();
+	void OnWeaveStarted();
+	void OnWeaveCompleted();
+	void OnBodyModStarted();
+	void OnBodyModCompleted();
+	void OnPowerModStarted();
+	void OnPowerModCompleted();
 
 	void SubmitLocalIntent(EFBAttackId Attack, bool bGuardHeld, EFBGuardState Guard);
+	EFBAttackId ResolveUppercutVariant(EFBAttackId BaseHook) const;
 	AFBBoxerCharacter* FindOpponent() const;
+	AActor* FindCombatTarget() const;
 	AFBBroadcastCamera* FindOrbitCamera() const;
 	void EnsurePersonalCamera();
 	void FaceOpponent(float DeltaSeconds);
+	void UpdateFacingOffset(float DeltaSeconds);
+	void ConfigureBodyCollision();
+	float GetSyncedTimeSeconds() const;
 	void EnsureRuntimeInput();
+
+	UFUNCTION(Server, Unreliable)
+	void ServerSetFacingOffset(float OffsetDegrees);
+
+	UFUNCTION()
+	void OnRep_AngleBonus();
 	void ApplyMappingContext();
 	void TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color);
+	void TintSkeletalMesh(const FLinearColor& Tint);
+	void SetupMannequinVisuals();
+	/** Moves the limb shapes into the guard, or into the punch that is currently playing. */
+	void UpdateBoxerPose(float DeltaSeconds);
+	void AttachGlovesToHands();
+	FName LeadHandSocket() const;
+	FName RearHandSocket() const;
 };

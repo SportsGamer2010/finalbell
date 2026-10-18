@@ -1,9 +1,13 @@
-// Final Bell — server-owned stamina/contact for jab/cross/guard (P1)
+﻿// Final Bell â€” server-owned stamina/contact for jab/cross/guard (P1)
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Combat/FBCombatTypes.h"
+
+class AActor;
+class AFBBoxerCharacter;
+
 #include "FBCombatComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFBOnImpactResolved, const FFBImpactEvent&, Impact);
@@ -42,7 +46,10 @@ public:
 	bool IsAttackCommitted() const { return AttackPhase != EFBAttackPhase::Idle; }
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
-	bool IsAttackActive() const { return AttackPhase == EFBAttackPhase::Active; }
+	bool IsBodyShot() const { return bActiveBodyShot; }
+
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
+	bool IsPowerShot() const { return bActivePowerShot; }
 
 	UPROPERTY(BlueprintAssignable, Category = "FinalBell|Combat")
 	FFBOnImpactResolved OnImpactResolved;
@@ -64,6 +71,30 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float CrossDamage = 12.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float LeadHookCost = 9.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float RearHookCost = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float LeadUppercutCost = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float RearUppercutCost = 11.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float LeadHookDamage = 11.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float RearHookDamage = 13.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float LeadUppercutDamage = 12.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float RearUppercutDamage = 14.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float MaxReachUU = 200.f;
@@ -89,6 +120,14 @@ public:
 	/** Pending opponent used when startup completes (authority only). */
 	TWeakObjectPtr<AActor> PendingOpponent;
 
+	/** How far the defender must step off the punch line to count as rolling under a hook. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float SlipLateralUU = 40.f;
+
+	FVector DefenderLocationAtStart = FVector::ZeroVector;
+
+	bool DidDefenderRollUnder(const AActor* Attacker, const AFBBoxerCharacter* Defender) const;
+
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float BurstEnergy = 100.f;
@@ -104,6 +143,12 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	EFBAttackPhase AttackPhase = EFBAttackPhase::Idle;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
+	bool bActiveBodyShot = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
+	bool bActivePowerShot = false;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	int32 LastProcessedSequence = 0;
@@ -126,6 +171,7 @@ protected:
 	float CostFor(EFBAttackId Attack) const;
 	float DamageFor(EFBAttackId Attack) const;
 	void SetPhase(EFBAttackPhase NewPhase, float Duration);
-	void BeginAttack(EFBAttackId Attack, AActor* Opponent);
+	void BeginAttack(EFBAttackId Attack, AActor* Opponent, bool bBodyShot, bool bPowerShot);
 	void ResolveAgainstOpponent(AActor* Opponent);
 };
+

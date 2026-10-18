@@ -16,11 +16,29 @@ AFBBroadcastCamera::AFBBroadcastCamera()
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(Root);
 	Camera->bUsePawnControlRotation = false;
+	Camera->SetFieldOfView(FightFOV);
+	Camera->PostProcessBlendWeight = 1.f;
+	Camera->PostProcessSettings.bOverride_VignetteIntensity = true;
+	Camera->PostProcessSettings.VignetteIntensity = 0.06f;
+	Camera->PostProcessSettings.bOverride_AutoExposureBias = true;
+	Camera->PostProcessSettings.AutoExposureBias = 1.15f;
+	Camera->PostProcessSettings.bOverride_AutoExposureMinBrightness = true;
+	Camera->PostProcessSettings.AutoExposureMinBrightness = 1.f;
+	Camera->PostProcessSettings.bOverride_ColorContrast = true;
+	Camera->PostProcessSettings.ColorContrast = FVector4(1.02f, 1.02f, 1.02f, 1.f);
+	Camera->PostProcessSettings.bOverride_ColorGain = true;
+	Camera->PostProcessSettings.ColorGain = FVector4(1.08f, 1.06f, 1.02f, 1.f);
+	Camera->PostProcessSettings.bOverride_BloomIntensity = true;
+	Camera->PostProcessSettings.BloomIntensity = 0.15f;
 }
 
 void AFBBroadcastCamera::BeginPlay()
 {
 	Super::BeginPlay();
+	if (Camera)
+	{
+		Camera->SetFieldOfView(FightFOV);
+	}
 	AutoFindFighters();
 	ForcePossessedView();
 }
@@ -51,20 +69,23 @@ void AFBBroadcastCamera::ForceViewForController(APlayerController* PC)
 
 void AFBBroadcastCamera::SetFighters(AFBBoxerCharacter* Player, AFBBoxerCharacter* Opponent)
 {
+	const bool bFirstFrame = !bHasFramed && Player && Opponent;
 	PlayerFighter = Player;
 	OpponentFighter = Opponent;
 
-	if (Player && Opponent)
+	if (bFirstFrame)
 	{
 		const FVector ToOpp = (Opponent->GetActorLocation() - Player->GetActorLocation()).GetSafeNormal2D();
 		if (!ToOpp.IsNearlyZero())
 		{
-			// Start behind the player, looking toward the opponent.
+			// Yaw 180 from the opponent puts the lens behind the controlled fighter.
 			OrbitYaw = ToOpp.Rotation().Yaw + 180.f;
 		}
+		OrbitPitch = 5.f;
+		bHasFramed = true;
+		SnapToFrame();
+		ForcePossessedView();
 	}
-
-	ForcePossessedView();
 }
 
 void AFBBroadcastCamera::AddOrbitInput(FVector2D Axis)
@@ -102,20 +123,54 @@ void AFBBroadcastCamera::AutoFindFighters()
 	}
 }
 
-void AFBBroadcastCamera::ResolveFocus(FVector& OutFocus, float& OutDistance) const
+void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) const
 {
-	const FVector LocPlayer = PlayerFighter.IsValid()
-		? PlayerFighter->GetActorLocation()
-		: GetActorLocation();
-	const FVector LocOpp = OpponentFighter.IsValid()
-		? OpponentFighter->GetActorLocation()
-		: LocPlayer + FVector(250.f, 0.f, 0.f);
+	const AFBBoxerCharacter* Player = PlayerFighter.Get();
+	if (!Player)
+	{
+		OutLocation = GetActorLocation();
+		OutLookAt = OutLocation + GetActorForwardVector() * 200.f;
+		return;
+	}
 
-	const FVector Mid = (LocPlayer + LocOpp) * 0.5f;
-	OutFocus = FMath::Lerp(Mid, LocOpp, FocusOpponentBias) + FVector(0.f, 0.f, FocusHeight);
+	const float PlayerHalf = FMath::Max(Player->GetStandingHalfHeight(), 1.f);
+	const FVector PlayerLoc = Player->GetActorLocation();
+	const FVector PlayerFeet = PlayerLoc - FVector(0.f, 0.f, PlayerHalf);
 
-	const float Separation = FVector::Dist(LocPlayer, LocOpp);
-	OutDistance = FMath::Clamp(BaseDistance + Separation * SeparationDistanceScale, MinDistance, MaxDistance);
+	FVector OppLoc = PlayerLoc + Player->GetActorForwardVector().GetSafeNormal2D() * 180.f;
+	float OppHalf = PlayerHalf;
+	if (const AFBBoxerCharacter* Opponent = OpponentFighter.Get())
+	{
+		OppLoc = Opponent->GetActorLocation();
+		OppHalf = FMath::Max(Opponent->GetStandingHalfHeight(), 1.f);
+	}
+	const FVector OppFeet = OppLoc - FVector(0.f, 0.f, OppHalf);
+
+	// OrbitYaw auto-aligns to "behind the player", so this vector points away from the opponent.
+	const FVector Back = FRotator(0.f, OrbitYaw, 0.f).Vector().GetSafeNormal2D();
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, -Back).GetSafeNormal();
+	const float LeadSign = (Player->Stance == EFBStance::Southpaw) ? 1.f : -1.f;
+
+	const float Separation = FVector::Dist2D(PlayerLoc, OppLoc);
+	const float CloseAlpha = 1.f - FMath::Clamp(Separation / FMath::Max(CloseSeparation, 1.f), 0.f, 1.f);
+	const float Distance = FollowDistance + ClosePullback * CloseAlpha;
+	const float PitchRad = FMath::DegreesToRadians(OrbitPitch);
+
+	OutLocation = PlayerLoc + Back * Distance + Right * (LeadSign * LeadSideOffset);
+	OutLocation.Z = PlayerFeet.Z + (PlayerHalf * 2.f) * ChestHeightFraction + FMath::Sin(PitchRad) * Distance * 0.45f;
+	OutLocation.Z = FMath::Max(OutLocation.Z, PlayerFeet.Z + 90.f);
+
+	OutLookAt = FVector(OppLoc.X, OppLoc.Y, OppFeet.Z + (OppHalf * 2.f) * LookAtHeightFraction);
+	OutLookAt.Z -= FMath::Sin(PitchRad) * 24.f;
+}
+
+void AFBBroadcastCamera::SnapToFrame()
+{
+	FVector Location;
+	FVector LookAt;
+	ComputeFrame(Location, LookAt);
+	SetActorLocation(Location);
+	SetActorRotation(UKismetMathLibrary::FindLookAtRotation(Location, LookAt));
 }
 
 void AFBBroadcastCamera::Tick(float DeltaSeconds)
@@ -156,21 +211,13 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 		}
 	}
 
-	FVector Focus;
-	float Distance = BaseDistance;
-	ResolveFocus(Focus, Distance);
+	FVector DesiredLocation;
+	FVector LookAt;
+	ComputeFrame(DesiredLocation, LookAt);
 
-	// Positive OrbitPitch = camera elevated above the ring looking down.
-	// FRotator pitch is opposite (positive looks up), so negate for placement.
-	const FRotator OrbitRot(-OrbitPitch, OrbitYaw, 0.f);
-	const FVector DesiredLocation = Focus - OrbitRot.Vector() * Distance;
-	const FVector SafeLocation(
-		DesiredLocation.X,
-		DesiredLocation.Y,
-		FMath::Max(DesiredLocation.Z, Focus.Z + 80.f));
-	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), SafeLocation, DeltaSeconds, LocationInterpSpeed);
+	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), DesiredLocation, DeltaSeconds, LocationInterpSpeed);
 	SetActorLocation(NewLocation);
 
-	const FRotator DesiredLook = UKismetMathLibrary::FindLookAtRotation(NewLocation, Focus);
+	const FRotator DesiredLook = UKismetMathLibrary::FindLookAtRotation(NewLocation, LookAt);
 	SetActorRotation(FMath::RInterpTo(GetActorRotation(), DesiredLook, DeltaSeconds, RotationInterpSpeed));
 }

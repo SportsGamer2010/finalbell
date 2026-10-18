@@ -1,4 +1,4 @@
-// Final Bell — shared combat enums/structs for P1 authoritative intent path
+﻿// Final Bell — shared combat enums/structs for P1 authoritative intent path
 #pragma once
 
 #include "CoreMinimal.h"
@@ -12,11 +12,24 @@ enum class EFBStance : uint8
 };
 
 UENUM(BlueprintType)
+enum class EFBPlayMode : uint8
+{
+	Unset = 0,
+	VersusAI,
+	Multiplayer,
+	Training
+};
+
+UENUM(BlueprintType)
 enum class EFBAttackId : uint8
 {
 	None = 0,
 	Jab,
-	Cross
+	Cross,
+	LeadHook,
+	RearHook,
+	LeadUppercut,
+	RearUppercut
 };
 
 UENUM(BlueprintType)
@@ -24,7 +37,8 @@ enum class EFBGuardState : uint8
 {
 	Open = 0,
 	High,
-	Low
+	Low,
+	Weave
 };
 
 UENUM(BlueprintType)
@@ -74,6 +88,14 @@ struct FFBCombatIntent
 
 	UPROPERTY(BlueprintReadWrite, Category = "FinalBell|Combat")
 	FString SchemaVersion = TEXT("1.0.0");
+
+	/** Aim the same punch at the body instead of the head. */
+	UPROPERTY(BlueprintReadWrite, Category = "FinalBell|Combat")
+	bool bBodyTarget = false;
+
+	/** Harder shot. Server applies the damage scale. */
+	UPROPERTY(BlueprintReadWrite, Category = "FinalBell|Combat")
+	bool bPowerPunch = false;
 };
 
 USTRUCT(BlueprintType)
@@ -98,4 +120,12 @@ struct FFBImpactEvent
 
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Combat")
 	bool bGuardIntercepted = false;
+
+	/** Defender slipped or rolled under the punch. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Combat")
+	bool bSlipped = false;
+
+	/** Clean or blocked contact landed during an angle-bonus window. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Combat")
+	bool bAngleBonus = false;
 };

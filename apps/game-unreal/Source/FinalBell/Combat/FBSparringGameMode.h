@@ -1,11 +1,13 @@
-// Final Bell — sparring flow + 1P AI or 2P human support
+﻿// Final Bell — sparring flow + mode-routed AI / MP / Training
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "Combat/FBCombatTypes.h"
 #include "FBSparringGameMode.generated.h"
 
 class AFBBoxerCharacter;
+class AFBHeavyBag;
 
 UENUM(BlueprintType)
 enum class EFBBoutPhase : uint8
@@ -39,6 +41,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Bout")
 	void StartBout();
 
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Session")
+	void ApplyPlayMode(EFBPlayMode Mode);
+
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Bout")
 	int32 TotalRounds = 3;
@@ -55,7 +60,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|P1")
 	bool bAutoStartBout = true;
 
-	/** Spawn an AI/dummy opponent only when fewer than 2 human players are present. */
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|P1")
 	bool bSpawnAiIfSolo = true;
 
@@ -64,6 +68,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Bout")
 	int32 CurrentRound = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Session")
+	EFBPlayMode ActivePlayMode = EFBPlayMode::Unset;
 
 	float PhaseTimeRemaining = 0.f;
 	bool bResultFinalized = false;
@@ -75,4 +82,10 @@ protected:
 	void FinalizeResultOnce();
 	void TryBuildArenaAndStart();
 	void PlaceFightersForMatch();
+	void DestroyAllAiOpponents();
+	/** Keeps one AI opponent in solo sparring, and none in multiplayer or training. */
+	void EnforceRoster();
+	void DestroyTrainingBag();
+	int32 CountHumanBoxers() const;
+	AFBHeavyBag* EnsureTrainingBag();
 };

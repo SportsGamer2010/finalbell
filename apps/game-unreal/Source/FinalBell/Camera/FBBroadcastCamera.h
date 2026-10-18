@@ -1,4 +1,6 @@
-// Final Bell — Fight Night / Undisputed style orbit camera
+// Final Bell — Undisputed medium camera.
+// Chest height, just behind the controlled fighter and off the lead-hand side,
+// so their back sits on the right of the frame and the opponent faces the lens.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -45,25 +47,35 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Camera")
 	TObjectPtr<UCameraComponent> Camera;
 
-	/** Extra distance beyond fighter separation. */
+	/** Horizontal FOV. Narrower than the engine default so heavyweights fill the frame. */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "40.0", ClampMax = "90.0"))
+	float FightFOV = 58.f;
+
+	/** Centimeters behind the controlled fighter. Stays put when they separate. */
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float BaseDistance = 420.f;
+	float FollowDistance = 142.f;
+
+	/**
+	 * Centimeters toward the lead-hand side.
+	 * Orthodox: camera on the fighter's left, so their back occupies the right of the frame.
+	 */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
+	float LeadSideOffset = 68.f;
+
+	/** Extra backup when the fighters are inside this separation, so the pocket still reads. */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
+	float CloseSeparation = 125.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float SeparationDistanceScale = 0.85f;
+	float ClosePullback = 40.f;
 
-	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float MinDistance = 320.f;
+	/** Camera height as a fraction of the fighter's standing height. ~0.70 is upper chest. */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "0.45", ClampMax = "0.95"))
+	float ChestHeightFraction = 0.70f;
 
-	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float MaxDistance = 900.f;
-
-	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float FocusHeight = 90.f;
-
-	/** 0 = midpoint, 1 = fully on opponent (Fight Night leans slightly toward mid). */
-	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float FocusOpponentBias = 0.35f;
+	/** Look target height on the opponent. ~0.78 is the base of the neck / high guard. */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "0.45", ClampMax = "0.98"))
+	float LookAtHeightFraction = 0.78f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
 	float OrbitYawSpeed = 110.f;
@@ -72,35 +84,37 @@ protected:
 	float OrbitPitchSpeed = 55.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float MinPitch = 12.f;
+	float MinPitch = 0.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float MaxPitch = 55.f;
+	float MaxPitch = 16.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float LocationInterpSpeed = 10.f;
+	float LocationInterpSpeed = 8.f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float RotationInterpSpeed = 12.f;
+	float RotationInterpSpeed = 10.f;
 
-	/** When stick is idle, ease yaw so camera sits behind the player looking at opponent. */
+	/** When stick is idle, ease yaw so the camera sits behind the player. */
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
 	bool bAutoAlignWhenIdle = true;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float AutoAlignSpeed = 1.6f;
+	float AutoAlignSpeed = 2.4f;
 
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
-	float AutoAlignIdleDelay = 0.35f;
+	float AutoAlignIdleDelay = 0.28f;
 
 	float OrbitYaw = -90.f;
-	float OrbitPitch = 22.f;
+	float OrbitPitch = 5.f;
 	float OrbitInputHoldTime = 0.f;
+	bool bHasFramed = false;
 	FVector2D PendingOrbitInput = FVector2D::ZeroVector;
 
 	TWeakObjectPtr<AFBBoxerCharacter> PlayerFighter;
 	TWeakObjectPtr<AFBBoxerCharacter> OpponentFighter;
 
 	void AutoFindFighters();
-	void ResolveFocus(FVector& OutFocus, float& OutDistance) const;
+	void ComputeFrame(FVector& OutLocation, FVector& OutLookAt) const;
+	void SnapToFrame();
 };

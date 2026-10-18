@@ -4,9 +4,13 @@
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBCombatTypes.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/SkyLight.h"
+#include "Engine/SpotLight.h"
+#include "Engine/PointLight.h"
+#include "Components/PointLightComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
@@ -22,8 +26,10 @@ namespace
 	const FName RingPropTag(TEXT("FB_P1RingProp"));
 	const FName OpponentTag(TEXT("FB_P1Opponent"));
 
-	/** Half-size of the canvas / playable apron (cm). */
-	constexpr float CanvasHalf = 450.f;
+	/** Half-size of a 20 ft pro ring inside the ropes (cm). */
+	constexpr float CanvasHalf = 305.f;
+	/** Opening center-to-center gap. Both heavyweights fill a medium shot. */
+	constexpr float OpeningHalfGap = 95.f;
 	/** Top of canvas Z. */
 	constexpr float CanvasTopZ = 0.f;
 
@@ -117,12 +123,12 @@ AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World)
 		return nullptr;
 	}
 
-	const FLinearColor CanvasColor(0.82f, 0.84f, 0.88f);
-	const FLinearColor ApronColor(0.12f, 0.12f, 0.14f);
-	const FLinearColor UnderColor(0.25f, 0.08f, 0.08f);
-	const FLinearColor RopeWhite(0.95f, 0.95f, 0.95f);
-	const FLinearColor RopeRed(0.75f, 0.08f, 0.08f);
-	const FLinearColor RopeBlue(0.1f, 0.25f, 0.75f);
+	const FLinearColor CanvasColor(0.84f, 0.86f, 0.90f);
+	const FLinearColor ApronColor(0.08f, 0.08f, 0.09f);
+	const FLinearColor UnderColor(0.18f, 0.05f, 0.05f);
+	const FLinearColor RopeWhite(0.90f, 0.93f, 0.96f);
+	const FLinearColor RopeIce(0.55f, 0.78f, 0.94f);
+	const FLinearColor ArenaDark(0.28f, 0.32f, 0.38f);
 	const FLinearColor PostMetal(0.35f, 0.35f, 0.38f);
 
 	// Raised platform underside + canvas top (cube default = 100cm).
@@ -191,12 +197,12 @@ AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World)
 		}
 	}
 
-	// Three rope tiers on each side.
-	const float RopeHeights[] = {48.f, 88.f, 128.f};
-	const FLinearColor RopeColors[] = {RopeBlue, RopeWhite, RopeRed};
+	// Four rope tiers. Ice/white so they read like the broadcast ring, not primary-color bars.
+	const float RopeHeights[] = {42.f, 84.f, 124.f, 162.f};
+	const FLinearColor RopeColors[] = {RopeIce, RopeWhite, RopeIce, RopeWhite};
 	const float RopeLenScale = (CanvasHalf * 2.f) / 100.f;
-	const float RopeThick = 0.06f;
-	for (int32 Tier = 0; Tier < 3; ++Tier)
+	const float RopeThick = 0.04f;
+	for (int32 Tier = 0; Tier < 4; ++Tier)
 	{
 		const float Z = CanvasTopZ + RopeHeights[Tier];
 		const FLinearColor& Col = RopeColors[Tier];
@@ -232,40 +238,110 @@ AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World)
 	SpawnHiddenWall(FVector(CanvasHalf + 10.f, 0.f, WallZ), FVector(WallT, RopeLenScale, WallH));
 	SpawnHiddenWall(FVector(-(CanvasHalf + 10.f), 0.f, WallZ), FVector(WallT, RopeLenScale, WallH));
 
+	// Dark bowl around the ring so the lit canvas is the only bright surface.
+	const float Bowl = 1800.f;
+	const float BowlScale = (Bowl * 2.f) / 100.f;
+	SpawnMeshActor(World, Cube, FVector(0.f, 0.f, -8.f), FRotator::ZeroRotator,
+		FVector(BowlScale, BowlScale, 0.08f), ArenaDark, true);
+	const float WallScaleZ = 10.f;
+	const float WallCenterZ = 500.f;
+	SpawnMeshActor(World, Cube, FVector(0.f, Bowl, WallCenterZ), FRotator::ZeroRotator,
+		FVector(BowlScale, 0.4f, WallScaleZ), ArenaDark, false);
+	SpawnMeshActor(World, Cube, FVector(0.f, -Bowl, WallCenterZ), FRotator::ZeroRotator,
+		FVector(BowlScale, 0.4f, WallScaleZ), ArenaDark, false);
+	SpawnMeshActor(World, Cube, FVector(Bowl, 0.f, WallCenterZ), FRotator::ZeroRotator,
+		FVector(0.4f, BowlScale, WallScaleZ), ArenaDark, false);
+	SpawnMeshActor(World, Cube, FVector(-Bowl, 0.f, WallCenterZ), FRotator::ZeroRotator,
+		FVector(0.4f, BowlScale, WallScaleZ), ArenaDark, false);
+
 	return Floor;
 }
 
 void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 {
-	bool bHasDir = false;
+	auto TuneKey = [](UDirectionalLightComponent* Comp)
+	{
+		if (!Comp)
+		{
+			return;
+		}
+		Comp->SetIntensity(10.f);
+		Comp->SetLightColor(FLinearColor(1.f, 0.96f, 0.90f));
+		Comp->SetAtmosphereSunLight(false);
+		Comp->SetCastShadows(true);
+	};
+	auto TuneFill = [](UDirectionalLightComponent* Comp)
+	{
+		if (!Comp)
+		{
+			return;
+		}
+		Comp->SetIntensity(6.f);
+		Comp->SetLightColor(FLinearColor(0.85f, 0.90f, 1.f));
+		Comp->SetAtmosphereSunLight(false);
+		Comp->SetCastShadows(false);
+	};
+
+	const FName KeyTag(TEXT("FB_P1KeyLight"));
+	const FName FillTag(TEXT("FB_P1FillLight"));
+	bool bHasKey = false;
+	bool bHasFill = false;
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
-		if (It->ActorHasTag(ArenaTag))
+		UDirectionalLightComponent* Comp = Cast<UDirectionalLightComponent>(It->GetLightComponent());
+		if (It->ActorHasTag(FillTag))
 		{
-			bHasDir = true;
-			break;
+			bHasFill = true;
+			TuneFill(Comp);
+		}
+		else
+		{
+			bHasKey = true;
+			It->Tags.Add(KeyTag);
+			It->SetActorRotation(FRotator(-48.f, 30.f, 0.f));
+			TuneKey(Comp);
 		}
 	}
-	if (!bHasDir)
+	if (!bHasKey)
 	{
 		FActorSpawnParameters Params;
-		ADirectionalLight* Light = World->SpawnActor<ADirectionalLight>(FVector(0.f, 0.f, 1200.f), FRotator(-55.f, 40.f, 0.f), Params);
+		ADirectionalLight* Light = World->SpawnActor<ADirectionalLight>(FVector(0.f, 0.f, 900.f), FRotator(-48.f, 30.f, 0.f), Params);
 		if (Light)
 		{
 			Light->Tags.Add(ArenaTag);
-			if (UDirectionalLightComponent* Comp = Cast<UDirectionalLightComponent>(Light->GetLightComponent()))
-			{
-				Comp->SetIntensity(14.f);
-				Comp->SetAtmosphereSunLight(true);
-			}
+			Light->Tags.Add(KeyTag);
+			TuneKey(Cast<UDirectionalLightComponent>(Light->GetLightComponent()));
 		}
 	}
+	if (!bHasFill)
+	{
+		FActorSpawnParameters Params;
+		ADirectionalLight* Fill = World->SpawnActor<ADirectionalLight>(FVector(0.f, 0.f, 700.f), FRotator(-18.f, -150.f, 0.f), Params);
+		if (Fill)
+		{
+			Fill->Tags.Add(ArenaTag);
+			Fill->Tags.Add(FillTag);
+			TuneFill(Cast<UDirectionalLightComponent>(Fill->GetLightComponent()));
+		}
+	}
+
+	auto TuneSky = [](USkyLightComponent* Comp)
+	{
+		if (!Comp)
+		{
+			return;
+		}
+		Comp->SetIntensity(2.2f);
+		Comp->bLowerHemisphereIsBlack = false;
+		Comp->SetMobility(EComponentMobility::Movable);
+		Comp->RecaptureSky();
+	};
 
 	bool bHasSky = false;
 	for (TActorIterator<ASkyLight> It(World); It; ++It)
 	{
 		bHasSky = true;
-		break;
+		TuneSky(It->GetLightComponent());
 	}
 	if (!bHasSky)
 	{
@@ -273,11 +349,84 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 		if (Sky)
 		{
 			Sky->Tags.Add(ArenaTag);
-			if (USkyLightComponent* Comp = Sky->GetLightComponent())
+			TuneSky(Sky->GetLightComponent());
+		}
+	}
+
+	auto TuneSpot = [](USpotLightComponent* Comp)
+	{
+		if (!Comp)
+		{
+			return;
+		}
+		Comp->SetIntensity(18000.f);
+		Comp->SetLightColor(FLinearColor(1.f, 0.97f, 0.92f));
+		Comp->SetAttenuationRadius(2200.f);
+		Comp->SetInnerConeAngle(28.f);
+		Comp->SetOuterConeAngle(70.f);
+		Comp->SetCastShadows(false);
+	};
+
+	bool bHasSpots = false;
+	for (TActorIterator<ASpotLight> It(World); It; ++It)
+	{
+		if (!It->ActorHasTag(ArenaTag))
+		{
+			continue;
+		}
+		bHasSpots = true;
+		TuneSpot(Cast<USpotLightComponent>(It->GetLightComponent()));
+	}
+	if (!bHasSpots)
+	{
+		const FVector SpotLocs[] = {
+			FVector(180.f, 180.f, 480.f),
+			FVector(180.f, -180.f, 480.f),
+			FVector(-180.f, 180.f, 480.f),
+			FVector(-180.f, -180.f, 480.f)
+		};
+		for (const FVector& Loc : SpotLocs)
+		{
+			const FRotator Aim = (FVector(0.f, 0.f, 110.f) - Loc).Rotation();
+			FActorSpawnParameters Params;
+			ASpotLight* Spot = World->SpawnActor<ASpotLight>(Loc, Aim, Params);
+			if (!Spot)
 			{
-				Comp->SetIntensity(1.4f);
-				Comp->SetMobility(EComponentMobility::Movable);
-				Comp->RecaptureSky();
+				continue;
+			}
+			Spot->Tags.Add(ArenaTag);
+			TuneSpot(Cast<USpotLightComponent>(Spot->GetLightComponent()));
+		}
+	}
+
+	bool bHasPoint = false;
+	for (TActorIterator<APointLight> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(ArenaTag))
+		{
+			bHasPoint = true;
+			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(It->GetLightComponent()))
+			{
+				Comp->SetIntensity(6000.f);
+				Comp->SetAttenuationRadius(1800.f);
+				Comp->SetCastShadows(false);
+				Comp->SetLightColor(FLinearColor(1.f, 0.95f, 0.88f));
+			}
+		}
+	}
+	if (!bHasPoint)
+	{
+		FActorSpawnParameters Params;
+		APointLight* Point = World->SpawnActor<APointLight>(FVector(0.f, 0.f, 380.f), FRotator::ZeroRotator, Params);
+		if (Point)
+		{
+			Point->Tags.Add(ArenaTag);
+			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(Point->GetLightComponent()))
+			{
+				Comp->SetIntensity(6000.f);
+				Comp->SetAttenuationRadius(1800.f);
+				Comp->SetCastShadows(false);
+				Comp->SetLightColor(FLinearColor(1.f, 0.95f, 0.88f));
 			}
 		}
 	}
@@ -351,7 +500,7 @@ AFBBroadcastCamera* UFBP1ArenaBootstrap::SpawnCamera(UWorld* World, AFBBoxerChar
 		return *It;
 	}
 
-	AFBBroadcastCamera* Cam = World->SpawnActor<AFBBroadcastCamera>(FVector(0.f, -900.f, 420.f), FRotator(-15.f, 90.f, 0.f));
+	AFBBroadcastCamera* Cam = World->SpawnActor<AFBBroadcastCamera>(FVector(0.f, -280.f, 170.f), FRotator(-12.f, 90.f, 0.f));
 	if (Cam)
 	{
 		Cam->Tags.Add(ArenaTag);
@@ -375,19 +524,18 @@ void UFBP1ArenaBootstrap::EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlay
 	SpawnLighting(World);
 	SpawnRing(World);
 
-	const float FighterZ = CanvasTopZ + 96.f;
-
 	OutPlayer = FindFirstPlayerBoxer(World);
+	const float FighterZ = CanvasTopZ + 6.f + (OutPlayer ? OutPlayer->GetStandingHalfHeight() : 112.f);
 	if (OutPlayer)
 	{
-		OutPlayer->SetActorLocation(FVector(-220.f, 0.f, FighterZ));
+		OutPlayer->SetActorLocation(FVector(-OpeningHalfGap, 0.f, FighterZ));
 		OutPlayer->SetActorRotation(FRotator(0.f, 0.f, 0.f));
 		OutPlayer->ApplyBasicSkin(EFBCornerSkin::BlueCorner);
 	}
 
 	if (bSpawnOpponentIfMissing)
 	{
-		OutOpponent = SpawnOpponent(World, FVector(220.f, 0.f, FighterZ));
+		OutOpponent = SpawnOpponent(World, FVector(OpeningHalfGap, 0.f, FighterZ));
 		if (OutOpponent)
 		{
 			OutOpponent->ApplyBasicSkin(EFBCornerSkin::RedCorner);
