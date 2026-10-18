@@ -26,9 +26,9 @@ The pawn you move. `AFBBoxerCharacter` is both you and the opponent.
 
 | Function | What it does |
 | --- | --- |
-| `AFBBoxerCharacter` | Builds the capsule, the combat component, and the visible limbs. Hides the skeletal mesh. |
+| `AFBBoxerCharacter` | Builds the capsule, the combat component, the skinned mannequin, and the fallback limb shapes. |
 | `GetLifetimeReplicatedProps` | Lists the values the server copies to other machines: stance, colors, damage, facing lock. |
-| `BeginPlay` | Shows the limb body and paints the corner color. |
+| `BeginPlay` | Shows the mannequin and paints the gloves in the corner color. |
 | `Tick` | Faces the opponent, updates the punch pose, and keeps the personal camera pointed. |
 | `SetupPlayerInputComponent` | Binds keys and the gamepad to move, look, and punch. |
 | `PossessedBy` | When a controller takes this pawn, installs the input and the camera. |
@@ -76,14 +76,20 @@ The pawn you move. `AFBBoxerCharacter` is both you and the opponent.
 | `ServerSetFacingOffset` | Client tells the server the shoulder angle. |
 | `OnRep_AngleBonus` | Shows a short message when the angle bonus arrives. |
 | `ApplyMappingContext` | Puts the key map on the local player. |
-| `TintMesh` | Paints one shape. |
-| `TintSkeletalMesh` | Unused while the mannequin stays hidden. |
-| `SetupMannequinVisuals` | Hides the skeleton and shows the limb shapes. |
-| `UpdateBoxerPose` | Places the arms and legs in the guard, and extends the arm that is punching. |
-| `AttachGlovesToHands` | Old mannequin glove attach. The pose places the gloves now. |
-| `LeadHandSocket` / `RearHandSocket` | Bone names for a future skinned mesh. Lead and rear swap in southpaw. |
+| `TintMesh` | Paints one shape. Gloves use this. The mannequin keeps its own materials. |
+| `TintSkeletalMesh` | Tries tint parameters on a skeletal mesh. The posed mannequin does not use it. |
+| `SetupMannequinVisuals` | Puts Manny or Quinn on the pose mesh and hides the cylinder body. Falls back to shapes if the mesh has no limb bones. |
+| `TryActivateSkinnedMesh` | Loads the corner mesh and checks that the arm and leg bones exist. |
+| `HideShapeBody` | Hides or shows the cylinder body. Gloves stay visible. |
+| `AttachGlovesToCapsule` | Parents the gloves to the capsule for the shape fallback. |
+| `UpdateDisplayedPunch` | Copies the server punch phase into the pose blend. |
+| `UpdateBoxerPose` | Chooses the mannequin pose or the shape pose. |
+| `ApplyShapePose` | Places the cylinder limbs in the guard or the punch. Used only when the mannequin did not load. |
+| `ApplySkinnedPose` | Writes the guard and the active punch onto the mannequin bones. |
+| `AttachGlovesToHands` | Parents the gloves to `hand_l` or `hand_r`. Lead and rear swap in southpaw. |
+| `LeadHandSocket` / `RearHandSocket` | Those hand bone names. |
 
-`UpdateBoxerPose` is what makes a punch visible. Jab and lead hook move the lead arm. Straight, rear hook, and rear uppercut move the rear arm. Hold C and the same punch drops to the body.
+`ApplySkinnedPose` is what makes a punch visible on the mannequin. It starts from the mesh reference pose, sets a boxing stance, then aims each arm at the guard or at the punch. Jab and lead hook move the lead arm. Straight, rear hook, and rear uppercut move the rear arm. Hold C and the same punch drops to the body. There is no separate animation asset; the pose is rebuilt every frame from the punch phase.
 
 ## Hits and stamina — `Combat/FBCombatComponent.h`
 

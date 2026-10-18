@@ -115,3 +115,10 @@ Matched the Wilder/Holmes framing in `https://youtu.be/Hx1lo0UHjJY` (chest-high 
 - Function map: `docs/CodeGuide.md`.
 - Build: `FinalBellEditor` Win64 Development **Succeeded** (25.5 s). PIE not re-checked this increment.
 
+### 2026-10-17 — Skinned mannequin, guard, and six punch poses
+
+- Blue corner uses `SKM_Manny_Simple`. Red corner uses `SKM_Quinn_Simple`. Both are driven by a poseable mesh, not the unarmed walk blueprint.
+- Guard, high guard, weave, jab, straight, lead hook, rear hook, lead uppercut, and rear uppercut are bone poses blended from the punch phase. Gloves sit on the hand bones. The cylinder body remains only if those meshes fail to load.
+- No boxing AnimSequence was authored. The pose is computed in `ApplySkinnedPose`.
+- Build: `FinalBellEditor` Win64 Development **Succeeded** (27.67 s). PIE not re-checked this increment.
+

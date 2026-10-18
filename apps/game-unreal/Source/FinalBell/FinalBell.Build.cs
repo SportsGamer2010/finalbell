@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -27,7 +27,8 @@ public class FinalBell : ModuleRules
 			"GameplayAbilities",
 			"GameplayTasks",
 			"NetCore",
-			"AIModule"
+			"AIModule",
+			"AnimationCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

@@ -1,6 +1,6 @@
 ﻿// Final Bell — the fighter you control.
-// The body you see is built from simple shapes (head, torso, arms, legs, gloves).
-// The skeletal mannequin is hidden so it cannot stand in the ring as an extra person.
+// The body is the skinned mannequin. Guard and punches are bone poses on that mesh.
+// Simple shapes are only a fallback if the mannequin fails to load.
 // Punches are requests. The server decides whether they land.
 #pragma once
 
@@ -10,6 +10,7 @@
 #include "FBBoxerCharacter.generated.h"
 
 class UFBCombatComponent;
+class UPoseableMeshComponent;
 class UStaticMeshComponent;
 class USkeletalMesh;
 class UInputMappingContext;
@@ -110,6 +111,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Combat")
 	TObjectPtr<UFBCombatComponent> CombatComponent;
 
+	/** Skinned body. Bone rotations are written each frame for the guard and the six punches. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
+	TObjectPtr<UPoseableMeshComponent> PoseMesh;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
 	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
@@ -173,6 +178,8 @@ protected:
 	int32 LocalIntentSequence = 0;
 	float HitFlashTime = 0.f;
 	bool bUsingMannequin = false;
+	/** Reference pose locals for the mesh currently on PoseMesh. */
+	TArray<FTransform> SkinnedRefLocals;
 	bool bBodyModifierHeld = false;
 	bool bPowerModifierHeld = false;
 	float PunchStickCooldown = 0.f;
@@ -286,8 +293,18 @@ protected:
 	void TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color);
 	void TintSkeletalMesh(const FLinearColor& Tint);
 	void SetupMannequinVisuals();
+	/** Loads the mannequin onto PoseMesh. Returns false when the mesh or the limb bones are missing. */
+	bool TryActivateSkinnedMesh();
+	/** Shows or hides the cylinder body. Gloves stay visible either way. */
+	void HideShapeBody(bool bHideShapes);
+	void AttachGlovesToCapsule();
+	/** Reads the replicated punch phase into PunchPoseAlpha, DisplayAttack, and bDisplayBody. */
+	void UpdateDisplayedPunch(float DeltaSeconds);
 	/** Moves the limb shapes into the guard, or into the punch that is currently playing. */
 	void UpdateBoxerPose(float DeltaSeconds);
+	void ApplyShapePose();
+	/** Writes the guard and the active punch onto the mannequin skeleton. */
+	void ApplySkinnedPose();
 	void AttachGlovesToHands();
 	FName LeadHandSocket() const;
 	FName RearHandSocket() const;

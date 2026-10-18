@@ -5,9 +5,12 @@
 #include "Input/FBRuntimeInputLibrary.h"
 #include "Animation/AnimInstance.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "ReferenceSkeleton.h"
+#include "TwoBoneIK.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -25,6 +28,88 @@
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
+
+namespace
+{
+	const FVector MeshForward(0.f, 1.f, 0.f);
+	const FVector MeshRight(-1.f, 0.f, 0.f);
+	const FVector MeshUp(0.f, 0.f, 1.f);
+
+	void RebuildComponentPose(const FReferenceSkeleton& Skel, const TArray<FTransform>& Local, TArray<FTransform>& ComponentSpace)
+	{
+		const int32 Num = Local.Num();
+		ComponentSpace.SetNum(Num);
+		if (Num == 0)
+		{
+			return;
+		}
+
+		ComponentSpace[0] = Local[0];
+		for (int32 Index = 1; Index < Num; ++Index)
+		{
+			const int32 Parent = Skel.GetParentIndex(Index);
+			ComponentSpace[Index] = Local[Index] * ComponentSpace[Parent];
+		}
+	}
+
+	void CommitComponentRotation(const FReferenceSkeleton& Skel, int32 Bone, const FQuat& Delta, TArray<FTransform>& Local, TArray<FTransform>& ComponentSpace)
+	{
+		if (!ComponentSpace.IsValidIndex(Bone))
+		{
+			return;
+		}
+
+		ComponentSpace[Bone].SetRotation((Delta * ComponentSpace[Bone].GetRotation()).GetNormalized());
+		const int32 Parent = Skel.GetParentIndex(Bone);
+		Local[Bone] = (Parent >= 0) ? ComponentSpace[Bone].GetRelativeTransform(ComponentSpace[Parent]) : ComponentSpace[Bone];
+		RebuildComponentPose(Skel, Local, ComponentSpace);
+	}
+
+	void AimBoneAt(const FReferenceSkeleton& Skel, int32 Bone, int32 Child, const FVector& Target, TArray<FTransform>& Local, TArray<FTransform>& ComponentSpace)
+	{
+		if (!ComponentSpace.IsValidIndex(Bone) || !ComponentSpace.IsValidIndex(Child))
+		{
+			return;
+		}
+
+		const FVector Origin = ComponentSpace[Bone].GetLocation();
+		const FVector OldDir = (ComponentSpace[Child].GetLocation() - Origin).GetSafeNormal();
+		const FVector NewDir = (Target - Origin).GetSafeNormal();
+		if (OldDir.IsNearlyZero() || NewDir.IsNearlyZero())
+		{
+			return;
+		}
+
+		CommitComponentRotation(Skel, Bone, FQuat::FindBetweenNormals(OldDir, NewDir), Local, ComponentSpace);
+	}
+
+	void SolveLimb(const FReferenceSkeleton& Skel, int32 Upper, int32 Lower, int32 End, const FVector& Effector, const FVector& Pole, TArray<FTransform>& Local, TArray<FTransform>& ComponentSpace)
+	{
+		if (!ComponentSpace.IsValidIndex(Upper) || !ComponentSpace.IsValidIndex(Lower) || !ComponentSpace.IsValidIndex(End))
+		{
+			return;
+		}
+
+		FTransform UpperCS = ComponentSpace[Upper];
+		FTransform LowerCS = ComponentSpace[Lower];
+		FTransform EndCS = ComponentSpace[End];
+		const FVector OldForearm = (EndCS.GetLocation() - LowerCS.GetLocation()).GetSafeNormal();
+
+		AnimationCore::SolveTwoBoneIK(UpperCS, LowerCS, EndCS, Pole, Effector, false, 1.0, 1.0);
+
+		const FVector NewForearm = (EndCS.GetLocation() - LowerCS.GetLocation()).GetSafeNormal();
+		if (!OldForearm.IsNearlyZero() && !NewForearm.IsNearlyZero())
+		{
+			EndCS.SetRotation((FQuat::FindBetweenNormals(OldForearm, NewForearm) * EndCS.GetRotation()).GetNormalized());
+		}
+
+		const int32 Parent = Skel.GetParentIndex(Upper);
+		Local[Upper] = (Parent >= 0) ? UpperCS.GetRelativeTransform(ComponentSpace[Parent]) : UpperCS;
+		Local[Lower] = LowerCS.GetRelativeTransform(UpperCS);
+		Local[End] = EndCS.GetRelativeTransform(LowerCS);
+		RebuildComponentPose(Skel, Local, ComponentSpace);
+	}
+}
 
 AFBBoxerCharacter::AFBBoxerCharacter()
 {
@@ -62,14 +147,24 @@ AFBBoxerCharacter::AFBBoxerCharacter()
 
 	if (USkeletalMeshComponent* Skel = GetMesh())
 	{
-		// The visible body is the posed limbs below. The skeletal mesh stays hidden
-		// so a mannequin is not standing inside the boxer.
+		// The posed mannequin is PoseMesh. This default mesh stays empty so it cannot
+		// stand in the ring as a second body.
 		Skel->SetSkeletalMesh(nullptr);
 		Skel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Skel->SetVisibility(false);
 		Skel->SetHiddenInGame(true);
 		Skel->SetCastShadow(false);
 	}
+
+	PoseMesh = CreateDefaultSubobject<UPoseableMeshComponent>(TEXT("PoseMesh"));
+	PoseMesh->SetupAttachment(GetCapsuleComponent());
+	PoseMesh->SetRelativeLocation(FVector(0.f, 0.f, -90.f));
+	PoseMesh->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+	PoseMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PoseMesh->SetCastShadow(true);
+	PoseMesh->SetVisibility(false);
+	PoseMesh->SetHiddenInGame(true);
+	PoseMesh->bReceivesDecals = false;
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
@@ -330,58 +425,58 @@ FName AFBBoxerCharacter::RearHandSocket() const
 	return (Stance == EFBStance::Southpaw) ? FName(TEXT("hand_l")) : FName(TEXT("hand_r"));
 }
 
+void AFBBoxerCharacter::AttachGlovesToCapsule()
+{
+	const FAttachmentTransformRules Rules(EAttachmentRule::SnapToTarget, false);
+	if (LeadGloveMesh)
+	{
+		LeadGloveMesh->AttachToComponent(GetCapsuleComponent(), Rules);
+	}
+	if (RearGloveMesh)
+	{
+		RearGloveMesh->AttachToComponent(GetCapsuleComponent(), Rules);
+	}
+}
+
 void AFBBoxerCharacter::AttachGlovesToHands()
 {
-	USkeletalMeshComponent* Skel = GetMesh();
-	if (!Skel || !bUsingMannequin)
+	if (!PoseMesh || !bUsingMannequin)
 	{
 		return;
 	}
 
 	const FAttachmentTransformRules Rules(EAttachmentRule::SnapToTarget, EAttachmentRule::SnapToTarget, EAttachmentRule::KeepWorld, false);
+	auto Seat = [&](UStaticMeshComponent* Glove, FName Socket)
+	{
+		if (!Glove)
+		{
+			return;
+		}
+		Glove->AttachToComponent(PoseMesh, Rules, Socket);
+		Glove->SetRelativeLocation(FVector(10.f, 0.f, 0.f));
+		Glove->SetRelativeRotation(FRotator::ZeroRotator);
+		Glove->SetRelativeScale3D(FVector(0.20f));
+		Glove->SetVisibility(true);
+		Glove->SetHiddenInGame(false);
+	};
 
-	if (LeadGloveMesh)
-	{
-		LeadGloveMesh->AttachToComponent(Skel, Rules, LeadHandSocket());
-		LeadGloveMesh->SetRelativeLocation(FVector(8.f, 0.f, 0.f));
-		LeadGloveMesh->SetRelativeScale3D(FVector(0.30f));
-		LeadGloveMesh->SetVisibility(true);
-		LeadGloveMesh->SetHiddenInGame(false);
-	}
-	if (RearGloveMesh)
-	{
-		RearGloveMesh->AttachToComponent(Skel, Rules, RearHandSocket());
-		RearGloveMesh->SetRelativeLocation(FVector(8.f, 0.f, 0.f));
-		RearGloveMesh->SetRelativeScale3D(FVector(0.30f));
-		RearGloveMesh->SetVisibility(true);
-		RearGloveMesh->SetHiddenInGame(false);
-	}
+	Seat(LeadGloveMesh, LeadHandSocket());
+	Seat(RearGloveMesh, RearHandSocket());
 }
 
-void AFBBoxerCharacter::SetupMannequinVisuals()
+void AFBBoxerCharacter::HideShapeBody(bool bHideShapes)
 {
-	if (USkeletalMeshComponent* Skel = GetMesh())
-	{
-		Skel->SetVisibility(false);
-		Skel->SetHiddenInGame(true);
-		Skel->SetCastShadow(false);
-		Skel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	}
-
-	bUsingMannequin = false;
-	auto Show = [](UStaticMeshComponent* MeshComp)
+	auto Show = [bHideShapes](UStaticMeshComponent* MeshComp)
 	{
 		if (MeshComp)
 		{
-			MeshComp->SetVisibility(true);
-			MeshComp->SetHiddenInGame(false);
+			MeshComp->SetVisibility(!bHideShapes);
+			MeshComp->SetHiddenInGame(bHideShapes);
 		}
 	};
 	Show(BodyMesh);
 	Show(HeadMesh);
 	Show(TrunksMesh);
-	Show(LeadGloveMesh);
-	Show(RearGloveMesh);
 	Show(LeadUpperArmMesh);
 	Show(LeadForearmMesh);
 	Show(RearUpperArmMesh);
@@ -392,6 +487,89 @@ void AFBBoxerCharacter::SetupMannequinVisuals()
 	Show(RearShinMesh);
 	Show(LeadShoeMesh);
 	Show(RearShoeMesh);
+
+	if (LeadGloveMesh)
+	{
+		LeadGloveMesh->SetVisibility(true);
+		LeadGloveMesh->SetHiddenInGame(false);
+	}
+	if (RearGloveMesh)
+	{
+		RearGloveMesh->SetVisibility(true);
+		RearGloveMesh->SetHiddenInGame(false);
+	}
+}
+
+bool AFBBoxerCharacter::TryActivateSkinnedMesh()
+{
+	if (!PoseMesh)
+	{
+		return false;
+	}
+
+	USkeletalMesh* Asset = (CornerSkin == EFBCornerSkin::RedCorner) ? QuinnMesh.Get() : MannyMesh.Get();
+	if (!Asset)
+	{
+		Asset = MannyMesh ? MannyMesh.Get() : QuinnMesh.Get();
+	}
+	if (!Asset)
+	{
+		return false;
+	}
+
+	if (PoseMesh->GetSkinnedAsset() != Asset)
+	{
+		PoseMesh->SetSkinnedAssetAndUpdate(Asset, true);
+		SkinnedRefLocals = Asset->GetRefSkeleton().GetRefBonePose();
+	}
+
+	if (SkinnedRefLocals.Num() == 0 || PoseMesh->GetBoneIndex(FName(TEXT("upperarm_l"))) == INDEX_NONE
+		|| PoseMesh->GetBoneIndex(FName(TEXT("hand_r"))) == INDEX_NONE
+		|| PoseMesh->GetBoneIndex(FName(TEXT("foot_l"))) == INDEX_NONE)
+	{
+		SkinnedRefLocals.Reset();
+		return false;
+	}
+
+	if (PoseMesh->BoneSpaceTransforms.Num() != SkinnedRefLocals.Num())
+	{
+		PoseMesh->AllocateTransformData();
+	}
+
+	PoseMesh->SetVisibility(true);
+	PoseMesh->SetHiddenInGame(false);
+	PoseMesh->SetCastShadow(true);
+	return PoseMesh->BoneSpaceTransforms.Num() == SkinnedRefLocals.Num();
+}
+
+void AFBBoxerCharacter::SetupMannequinVisuals()
+{
+	if (USkeletalMeshComponent* Skel = GetMesh())
+	{
+		Skel->SetSkeletalMesh(nullptr);
+		Skel->SetVisibility(false);
+		Skel->SetHiddenInGame(true);
+		Skel->SetCastShadow(false);
+		Skel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	if (TryActivateSkinnedMesh())
+	{
+		bUsingMannequin = true;
+		HideShapeBody(true);
+		AttachGlovesToHands();
+		return;
+	}
+
+	bUsingMannequin = false;
+	SkinnedRefLocals.Reset();
+	if (PoseMesh)
+	{
+		PoseMesh->SetVisibility(false);
+		PoseMesh->SetHiddenInGame(true);
+	}
+	HideShapeBody(false);
+	AttachGlovesToCapsule();
 }
 
 void AFBBoxerCharacter::TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color)
@@ -473,7 +651,47 @@ void AFBBoxerCharacter::RefreshCombatPresentation()
 {
 }
 
+void AFBBoxerCharacter::UpdateDisplayedPunch(float DeltaSeconds)
+{
+	const EFBAttackPhase Phase = CombatComponent ? CombatComponent->GetAttackPhase() : EFBAttackPhase::Idle;
+	const EFBAttackId LiveAttack = CombatComponent ? CombatComponent->GetActiveAttack() : EFBAttackId::None;
+	if (LiveAttack != EFBAttackId::None)
+	{
+		DisplayAttack = LiveAttack;
+		bDisplayBody = CombatComponent->IsBodyShot();
+	}
+
+	float TargetAlpha = 0.f;
+	if (Phase == EFBAttackPhase::Startup)
+	{
+		TargetAlpha = 0.55f;
+	}
+	else if (Phase == EFBAttackPhase::Active)
+	{
+		TargetAlpha = 1.f;
+	}
+	PunchPoseAlpha = FMath::FInterpTo(PunchPoseAlpha, TargetAlpha, DeltaSeconds, TargetAlpha > PunchPoseAlpha ? 18.f : 8.f);
+	if (LiveAttack == EFBAttackId::None && PunchPoseAlpha < 0.04f)
+	{
+		DisplayAttack = EFBAttackId::None;
+		bDisplayBody = false;
+	}
+}
+
 void AFBBoxerCharacter::UpdateBoxerPose(float DeltaSeconds)
+{
+	UpdateDisplayedPunch(DeltaSeconds);
+	if (bUsingMannequin)
+	{
+		ApplySkinnedPose();
+	}
+	else
+	{
+		ApplyShapePose();
+	}
+}
+
+void AFBBoxerCharacter::ApplyShapePose()
 {
 	auto Side = [this](FVector Point)
 	{
@@ -507,29 +725,6 @@ void AFBBoxerCharacter::UpdateBoxerPose(float DeltaSeconds)
 	};
 
 	const EFBGuardState Guard = CombatComponent ? CombatComponent->GetGuardState() : EFBGuardState::Open;
-	const EFBAttackPhase Phase = CombatComponent ? CombatComponent->GetAttackPhase() : EFBAttackPhase::Idle;
-	const EFBAttackId LiveAttack = CombatComponent ? CombatComponent->GetActiveAttack() : EFBAttackId::None;
-	if (LiveAttack != EFBAttackId::None)
-	{
-		DisplayAttack = LiveAttack;
-		bDisplayBody = CombatComponent->IsBodyShot();
-	}
-
-	float TargetAlpha = 0.f;
-	if (Phase == EFBAttackPhase::Startup)
-	{
-		TargetAlpha = 0.55f;
-	}
-	else if (Phase == EFBAttackPhase::Active)
-	{
-		TargetAlpha = 1.f;
-	}
-	PunchPoseAlpha = FMath::FInterpTo(PunchPoseAlpha, TargetAlpha, DeltaSeconds, TargetAlpha > PunchPoseAlpha ? 18.f : 8.f);
-	if (LiveAttack == EFBAttackId::None && PunchPoseAlpha < 0.04f)
-	{
-		DisplayAttack = EFBAttackId::None;
-		bDisplayBody = false;
-	}
 
 	const FVector LeadShoulder = Side(FVector(4.f, -18.f, 30.f));
 	const FVector RearShoulder = Side(FVector(0.f, 18.f, 30.f));
@@ -636,6 +831,221 @@ void AFBBoxerCharacter::UpdateBoxerPose(float DeltaSeconds)
 		RearShoeMesh->SetRelativeLocation(RearAnkle + Side(FVector(8.f, 0.f, -3.f)));
 		RearShoeMesh->SetRelativeScale3D(FVector(0.26f, 0.12f, 0.08f));
 	}
+}
+
+void AFBBoxerCharacter::ApplySkinnedPose()
+{
+	if (!PoseMesh || SkinnedRefLocals.Num() == 0 || PoseMesh->GetSkinnedAsset() == nullptr)
+	{
+		return;
+	}
+
+	const FReferenceSkeleton& Skel = PoseMesh->GetSkinnedAsset()->GetRefSkeleton();
+	if (PoseMesh->BoneSpaceTransforms.Num() != SkinnedRefLocals.Num())
+	{
+		PoseMesh->AllocateTransformData();
+	}
+	if (PoseMesh->BoneSpaceTransforms.Num() != SkinnedRefLocals.Num())
+	{
+		return;
+	}
+
+	auto Side = [this](FVector Point)
+	{
+		if (Stance == EFBStance::Southpaw)
+		{
+			Point.Y = -Point.Y;
+		}
+		return Point;
+	};
+	auto Bone = [this](const TCHAR* Name)
+	{
+		return PoseMesh->GetBoneIndex(FName(Name));
+	};
+	auto ToMesh = [this](const FVector& CapsulePoint)
+	{
+		return PoseMesh->GetRelativeTransform().InverseTransformPosition(CapsulePoint);
+	};
+	auto ToCapsule = [this](const FVector& MeshPoint)
+	{
+		return PoseMesh->GetRelativeTransform().TransformPosition(MeshPoint);
+	};
+
+	const bool bSouthpaw = Stance == EFBStance::Southpaw;
+	const float LeadYaw = bSouthpaw ? -1.f : 1.f;
+	const EFBGuardState Guard = CombatComponent ? CombatComponent->GetGuardState() : EFBGuardState::Open;
+	const bool bPower = CombatComponent && CombatComponent->IsPowerShot() && DisplayAttack != EFBAttackId::None;
+
+	TArray<FTransform> Local = SkinnedRefLocals;
+	TArray<FTransform> ComponentSpace;
+	RebuildComponentPose(Skel, Local, ComponentSpace);
+
+	const int32 Pelvis = Bone(TEXT("pelvis"));
+	const int32 SpineA = Bone(TEXT("spine_01"));
+	const int32 SpineB = Bone(TEXT("spine_03"));
+	const int32 Neck = Bone(TEXT("neck_01"));
+	const int32 Head = Bone(TEXT("head"));
+
+	CommitComponentRotation(Skel, Pelvis, FQuat(MeshUp, FMath::DegreesToRadians(14.f * LeadYaw)), Local, ComponentSpace);
+
+	float Lean = 8.f;
+	float Chin = 16.f;
+	if (Guard == EFBGuardState::Weave)
+	{
+		Lean += 22.f;
+		Chin += 14.f;
+	}
+	float PunchYaw = 0.f;
+	switch (DisplayAttack)
+	{
+	case EFBAttackId::Jab: PunchYaw = 6.f; Lean += 4.f; break;
+	case EFBAttackId::Cross: PunchYaw = -18.f; Lean += 8.f; break;
+	case EFBAttackId::LeadHook: PunchYaw = 24.f; break;
+	case EFBAttackId::RearHook: PunchYaw = -26.f; break;
+	case EFBAttackId::LeadUppercut: PunchYaw = 8.f; Lean += 10.f; break;
+	case EFBAttackId::RearUppercut: PunchYaw = -10.f; Lean += 12.f; break;
+	default: break;
+	}
+	PunchYaw *= PunchPoseAlpha * LeadYaw;
+
+	CommitComponentRotation(Skel, SpineA, FQuat(MeshRight, FMath::DegreesToRadians(Lean * 0.45f)), Local, ComponentSpace);
+	CommitComponentRotation(Skel, SpineB, FQuat(MeshRight, FMath::DegreesToRadians(Lean * 0.55f)) * FQuat(MeshUp, FMath::DegreesToRadians(PunchYaw)), Local, ComponentSpace);
+	CommitComponentRotation(Skel, Neck, FQuat(MeshRight, FMath::DegreesToRadians(Chin * 0.35f)), Local, ComponentSpace);
+	CommitComponentRotation(Skel, Head, FQuat(MeshRight, FMath::DegreesToRadians(Chin * 0.65f)), Local, ComponentSpace);
+
+	const int32 LeftThigh = Bone(TEXT("thigh_l"));
+	const int32 LeftCalf = Bone(TEXT("calf_l"));
+	const int32 LeftFoot = Bone(TEXT("foot_l"));
+	const int32 RightThigh = Bone(TEXT("thigh_r"));
+	const int32 RightCalf = Bone(TEXT("calf_r"));
+	const int32 RightFoot = Bone(TEXT("foot_r"));
+	const int32 LeadThigh = bSouthpaw ? RightThigh : LeftThigh;
+	const int32 LeadCalf = bSouthpaw ? RightCalf : LeftCalf;
+	const int32 LeadFootBone = bSouthpaw ? RightFoot : LeftFoot;
+	const int32 RearThigh = bSouthpaw ? LeftThigh : RightThigh;
+	const int32 RearCalf = bSouthpaw ? LeftCalf : RightCalf;
+	const int32 RearFootBone = bSouthpaw ? LeftFoot : RightFoot;
+
+	SolveLimb(Skel, LeadThigh, LeadCalf, LeadFootBone, ToMesh(Side(FVector(22.f, -16.f, -82.f))), ToMesh(Side(FVector(52.f, -16.f, -30.f))), Local, ComponentSpace);
+	SolveLimb(Skel, RearThigh, RearCalf, RearFootBone, ToMesh(Side(FVector(-18.f, 18.f, -82.f))), ToMesh(Side(FVector(8.f, 18.f, -30.f))), Local, ComponentSpace);
+
+	const int32 LeftClav = Bone(TEXT("clavicle_l"));
+	const int32 RightClav = Bone(TEXT("clavicle_r"));
+	const int32 LeftUpper = Bone(TEXT("upperarm_l"));
+	const int32 LeftLower = Bone(TEXT("lowerarm_l"));
+	const int32 LeftHand = Bone(TEXT("hand_l"));
+	const int32 RightUpper = Bone(TEXT("upperarm_r"));
+	const int32 RightLower = Bone(TEXT("lowerarm_r"));
+	const int32 RightHand = Bone(TEXT("hand_r"));
+	const int32 LeadUpper = bSouthpaw ? RightUpper : LeftUpper;
+	const int32 LeadLower = bSouthpaw ? RightLower : LeftLower;
+	const int32 LeadHandBone = bSouthpaw ? RightHand : LeftHand;
+	const int32 RearUpper = bSouthpaw ? LeftUpper : RightUpper;
+	const int32 RearLower = bSouthpaw ? LeftLower : RightLower;
+	const int32 RearHandBone = bSouthpaw ? LeftHand : RightHand;
+	const int32 LeadClav = bSouthpaw ? RightClav : LeftClav;
+	const int32 RearClav = bSouthpaw ? LeftClav : RightClav;
+
+	auto LiftClavicle = [&](int32 Clavicle, int32 Upper, float ExtraForward)
+	{
+		if (!ComponentSpace.IsValidIndex(Clavicle) || !ComponentSpace.IsValidIndex(Upper))
+		{
+			return;
+		}
+		const FVector Target = ComponentSpace[Upper].GetLocation() + MeshForward * (6.f + ExtraForward) + MeshUp * 10.f;
+		AimBoneAt(Skel, Clavicle, Upper, Target, Local, ComponentSpace);
+	};
+	const bool bLeadPunch = DisplayAttack == EFBAttackId::Jab || DisplayAttack == EFBAttackId::LeadHook || DisplayAttack == EFBAttackId::LeadUppercut;
+	const bool bRearPunch = DisplayAttack == EFBAttackId::Cross || DisplayAttack == EFBAttackId::RearHook || DisplayAttack == EFBAttackId::RearUppercut;
+	LiftClavicle(LeadClav, LeadUpper, bLeadPunch ? 12.f * PunchPoseAlpha : 0.f);
+	LiftClavicle(RearClav, RearUpper, bRearPunch ? 12.f * PunchPoseAlpha : 0.f);
+
+	auto ShoulderCapsule = [&](int32 UpperBone)
+	{
+		return ComponentSpace.IsValidIndex(UpperBone) ? ToCapsule(ComponentSpace[UpperBone].GetLocation()) : FVector(0.f, 0.f, 40.f);
+	};
+
+	const FVector LeadShoulder = ShoulderCapsule(LeadUpper);
+	const FVector RearShoulder = ShoulderCapsule(RearUpper);
+
+	FVector LeadHand = LeadShoulder + Side(FVector(26.f, 8.f, 14.f));
+	FVector RearHand = RearShoulder + Side(FVector(18.f, -8.f, 12.f));
+	FVector LeadPole = LeadShoulder + Side(FVector(6.f, -42.f, -4.f));
+	FVector RearPole = RearShoulder + Side(FVector(4.f, 42.f, -4.f));
+
+	if (Guard == EFBGuardState::High)
+	{
+		LeadHand.Z += 10.f;
+		RearHand.Z += 10.f;
+		LeadHand.X -= 6.f;
+		RearHand.X -= 4.f;
+		LeadPole.Z += 14.f;
+		RearPole.Z += 14.f;
+	}
+	else if (Guard == EFBGuardState::Weave)
+	{
+		LeadHand.Z -= 16.f;
+		RearHand.Z -= 16.f;
+	}
+
+	auto BlendArm = [&](bool bLead, const FVector& HandOffset, const FVector& PoleOffset)
+	{
+		FVector Hand = HandOffset;
+		if (bDisplayBody)
+		{
+			Hand.Z -= 26.f;
+		}
+		if (bPower)
+		{
+			Hand.X += 8.f;
+		}
+		if (bLead)
+		{
+			LeadHand = FMath::Lerp(LeadHand, LeadShoulder + Side(Hand), PunchPoseAlpha);
+			LeadPole = FMath::Lerp(LeadPole, LeadShoulder + Side(PoleOffset), PunchPoseAlpha);
+		}
+		else
+		{
+			RearHand = FMath::Lerp(RearHand, RearShoulder + Side(Hand), PunchPoseAlpha);
+			RearPole = FMath::Lerp(RearPole, RearShoulder + Side(PoleOffset), PunchPoseAlpha);
+		}
+	};
+
+	switch (DisplayAttack)
+	{
+	case EFBAttackId::Jab:
+		BlendArm(true, FVector(64.f, 4.f, 4.f), FVector(18.f, -30.f, -8.f));
+		break;
+	case EFBAttackId::Cross:
+		BlendArm(false, FVector(72.f, -6.f, 6.f), FVector(20.f, 28.f, -6.f));
+		break;
+	case EFBAttackId::LeadHook:
+		BlendArm(true, FVector(20.f, 48.f, 8.f), FVector(-6.f, -38.f, 12.f));
+		break;
+	case EFBAttackId::RearHook:
+		BlendArm(false, FVector(22.f, -50.f, 8.f), FVector(-4.f, 40.f, 12.f));
+		break;
+	case EFBAttackId::LeadUppercut:
+		BlendArm(true, FVector(24.f, 6.f, 42.f), FVector(14.f, -14.f, -46.f));
+		break;
+	case EFBAttackId::RearUppercut:
+		BlendArm(false, FVector(28.f, -8.f, 46.f), FVector(16.f, 16.f, -48.f));
+		break;
+	default:
+		break;
+	}
+
+	SolveLimb(Skel, LeadUpper, LeadLower, LeadHandBone, ToMesh(LeadHand), ToMesh(LeadPole), Local, ComponentSpace);
+	SolveLimb(Skel, RearUpper, RearLower, RearHandBone, ToMesh(RearHand), ToMesh(RearPole), Local, ComponentSpace);
+
+	if (Head != INDEX_NONE && HitFlashTime > 0.f)
+	{
+		Local[Head].SetScale3D(SkinnedRefLocals[Head].GetScale3D() * (1.f + HitFlashTime * 1.5f));
+	}
+
+	PoseMesh->BoneSpaceTransforms = Local;
+	PoseMesh->MarkRefreshTransformDirty();
+	PoseMesh->RefreshBoneTransforms();
 }
 
 void AFBBoxerCharacter::HandleImpactPresentation(const FFBImpactEvent& Impact)
