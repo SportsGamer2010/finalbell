@@ -7,7 +7,8 @@
 
 namespace
 {
-	constexpr float StickDeadZone = 0.38f;
+	// One stick dead zone. AxisConfig is 0, so this is not stacked on a second gate.
+	constexpr float StickDeadZone = 0.22f;
 
 	UInputAction* MakeAction(UObject* Outer, const FName Name, EInputActionValueType Type, bool bHold = false)
 	{
@@ -104,10 +105,7 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 		FEnhancedActionKeyMapping& Left2D = Bundle.MappingContext->MapKey(Bundle.Move, EKeys::Gamepad_Left2D);
 		AddRadialDeadZone(Left2D, Bundle.MappingContext);
 	}
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftY, true, false, true);
-	MapAxisKey(Bundle.MappingContext, Bundle.Move, EKeys::Gamepad_LeftX, false, false, true);
-
-	// Camera orbit — mouse + Q/E only (RS reserved for Undisputed punch flick)
+	// Camera orbit — mouse + Q/E only. The right stick is mapped once, below.
 	{
 		FEnhancedActionKeyMapping& Mouse = Bundle.MappingContext->MapKey(Bundle.Look, EKeys::Mouse2D);
 		if (UInputModifierScalar* Scalar = NewObject<UInputModifierScalar>(Bundle.MappingContext))
@@ -119,7 +117,9 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::E, false, false, false);
 	MapAxisKey(Bundle.MappingContext, Bundle.Look, EKeys::Q, false, true, false);
 
-	// Right stick angles the shoulders. A hard flick still throws the punch once.
+	// One mapping for the right stick. Below the flick threshold it only yaws the shoulders.
+	// At or above that threshold the character throws one punch and does not also yaw.
+	// There is no second 0.78 gate on this axis. Keyboard punches stay on the face keys.
 	{
 		FEnhancedActionKeyMapping& Turn2D = Bundle.MappingContext->MapKey(Bundle.Turn, EKeys::Gamepad_Right2D);
 		AddRadialDeadZone(Turn2D, Bundle.MappingContext, 0.12f);
@@ -129,10 +129,6 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	MapAxisKey(Bundle.MappingContext, Bundle.Turn, EKeys::Down, true, true, false);
 	MapAxisKey(Bundle.MappingContext, Bundle.Turn, EKeys::Right, false, false, false);
 	MapAxisKey(Bundle.MappingContext, Bundle.Turn, EKeys::Left, false, true, false);
-	{
-		FEnhancedActionKeyMapping& Right2D = Bundle.MappingContext->MapKey(Bundle.PunchStick, EKeys::Gamepad_Right2D);
-		AddRadialDeadZone(Right2D, Bundle.MappingContext, 0.78f);
-	}
 
 	// Face buttons — Competitor: Square/X jab, Triangle/Y cross, X/A lead hook, Circle/B rear hook
 	Bundle.MappingContext->MapKey(Bundle.Jab, EKeys::Gamepad_FaceButton_Left);   // Square / X

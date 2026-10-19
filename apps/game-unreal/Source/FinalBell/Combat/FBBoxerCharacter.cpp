@@ -2,6 +2,7 @@
 #include "Combat/FBBoxerAIController.h"
 #include "Combat/FBCombatComponent.h"
 #include "Combat/FBSparringGameMode.h"
+#include "Combat/FBSparringPlayerController.h"
 #include "Camera/FBBroadcastCamera.h"
 #include "Ring/FBRingBounds.h"
 #include "Input/FBRuntimeInputLibrary.h"
@@ -27,10 +28,19 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Training/FBHeavyBag.h"
 #include "CollisionShape.h"
+#include "Components/SphereComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
+
+#if !UE_BUILD_SHIPPING
+static TAutoConsoleVariable<int32> CVarFBDebugContact(
+	TEXT("fb.DebugContact"),
+	0,
+	TEXT("Draw the glove sweep and the head, torso, and guard volumes. This is not the bout HUD."));
+#endif
 
 namespace
 {
@@ -227,6 +237,35 @@ AFBBoxerCharacter::AFBBoxerCharacter()
 	ConfigureBodyCollision();
 
 	CombatComponent = CreateDefaultSubobject<UFBCombatComponent>(TEXT("CombatComponent"));
+
+	auto ArmVolume = [](USphereComponent* Sphere, float Radius, const FVector& Rel, const FName& Tag, bool bEnabled)
+	{
+		if (!Sphere)
+		{
+			return;
+		}
+		Sphere->SetSphereRadius(Radius);
+		Sphere->SetRelativeLocation(Rel);
+		Sphere->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		Sphere->SetCollisionObjectType(ECC_WorldDynamic);
+		Sphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+		Sphere->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+		Sphere->SetGenerateOverlapEvents(false);
+		Sphere->SetHiddenInGame(true);
+		Sphere->SetVisibility(false);
+		Sphere->CanCharacterStepUpOn = ECanBeCharacterBase::ECB_No;
+		Sphere->SetCanEverAffectNavigation(false);
+		Sphere->ComponentTags.Add(Tag);
+	};
+	HeadVolume = CreateDefaultSubobject<USphereComponent>(TEXT("FBHeadVolume"));
+	HeadVolume->SetupAttachment(GetCapsuleComponent());
+	ArmVolume(HeadVolume, 18.f, FVector(0.f, 0.f, 58.f), TEXT("FB_Head"), true);
+	TorsoVolume = CreateDefaultSubobject<USphereComponent>(TEXT("FBTorsoVolume"));
+	TorsoVolume->SetupAttachment(GetCapsuleComponent());
+	ArmVolume(TorsoVolume, 26.f, FVector(0.f, 0.f, 2.f), TEXT("FB_Torso"), true);
+	GuardVolume = CreateDefaultSubobject<USphereComponent>(TEXT("FBGuardVolume"));
+	GuardVolume->SetupAttachment(GetCapsuleComponent());
+	ArmVolume(GuardVolume, 14.f, FVector(24.f, 0.f, 56.f), TEXT("FB_Guard"), false);
 
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MannyFinder(
 		TEXT("/Game/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
@@ -594,6 +633,147 @@ bool AFBBoxerCharacter::DoesPunchConnect(EFBAttackId Attack, AActor* Target) con
 	return false;
 }
 
+FVector AFBBoxerCharacter::GetGlovePoint(EFBAttackId Attack, float Alpha) const
+{
+	const FVector Extended = GetPunchVolumeCenter(Attack);
+	const FVector Forward = GetActorForwardVector().GetSafeNormal2D();
+	const bool bBody = CombatComponent && CombatComponent->IsBodyShot();
+	FVector Retracted = GetActorLocation() + FVector(0.f, 0.f, bBody ? 8.f : 50.f);
+	if (!Forward.IsNearlyZero())
+	{
+		Retracted += Forward * 28.f;
+	}
+	return FMath::Lerp(Retracted, Extended, FMath::Clamp(Alpha, 0.f, 1.f));
+}
+
+bool AFBBoxerCharacter::SweepGlove(AActor* Target, const FVector& From, const FVector& To, float Radius, bool bBodyShot, bool bGuardCounts, bool& bOutBlocked) const
+{
+	bOutBlocked = false;
+	UWorld* World = GetWorld();
+	const AFBBoxerCharacter* Defender = Cast<AFBBoxerCharacter>(Target);
+	if (!World || !Defender)
+	{
+		return false;
+	}
+
+	DrawContactDebug(From, To, Radius);
+
+	FVector End = To;
+	if (FVector::DistSquared(From, To) < 1.f)
+	{
+		End = To + FVector(0.f, 0.f, 1.f);
+	}
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(FBGloveSweep), false, this);
+	Params.AddIgnoredActor(this);
+	TArray<FHitResult> Hits;
+	const FCollisionShape Sphere = FCollisionShape::MakeSphere(Radius);
+	World->SweepMultiByChannel(Hits, From, End, FQuat::Identity, ECC_Visibility, Sphere, Params);
+
+	const UFBCombatComponent* DefenderCombat = Defender->GetCombatComponent();
+	const EFBGuardState Guard = DefenderCombat ? DefenderCombat->GetGuardState() : EFBGuardState::Open;
+	Hits.Sort([](const FHitResult& A, const FHitResult& B)
+	{
+		return A.Time < B.Time;
+	});
+
+	bool bClean = false;
+	for (const FHitResult& Hit : Hits)
+	{
+		if (Hit.GetActor() != Defender)
+		{
+			continue;
+		}
+		const UPrimitiveComponent* Comp = Hit.GetComponent();
+		if (!Comp || Comp == Defender->GetCapsuleComponent())
+		{
+			continue;
+		}
+		const bool bHead = Comp == Defender->HeadVolume;
+		const bool bTorso = Comp == Defender->TorsoVolume;
+		const bool bGuard = Comp == Defender->GuardVolume;
+		if (bGuard)
+		{
+			if (!bGuardCounts || Guard == EFBGuardState::Open || Guard == EFBGuardState::Weave)
+			{
+				continue;
+			}
+			if (bBodyShot && Guard == EFBGuardState::High)
+			{
+				continue;
+			}
+			if (!bBodyShot && Guard == EFBGuardState::Low)
+			{
+				continue;
+			}
+			bOutBlocked = true;
+			return true;
+		}
+		if (bHead && !bBodyShot)
+		{
+			bClean = true;
+			break;
+		}
+		if (bTorso && bBodyShot)
+		{
+			bClean = true;
+			break;
+		}
+	}
+	return bClean;
+}
+
+void AFBBoxerCharacter::DrawContactDebug(const FVector& From, const FVector& To, float Radius) const
+{
+#if UE_BUILD_SHIPPING
+	(void)From;
+	(void)To;
+	(void)Radius;
+#else
+	if (CVarFBDebugContact.GetValueOnGameThread() <= 0 || !GetWorld())
+	{
+		return;
+	}
+	DrawDebugSphere(GetWorld(), From, Radius, 12, FColor::Silver, false, 0.f, 0, 0.6f);
+	DrawDebugSphere(GetWorld(), To, Radius, 12, FColor::White, false, 0.f, 0, 0.8f);
+	DrawDebugLine(GetWorld(), From, To, FColor::White, false, 0.f, 0, 0.5f);
+	auto Mark = [this](const USphereComponent* Volume, const FColor& Color)
+	{
+		if (!Volume || Volume->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+		{
+			return;
+		}
+		DrawDebugSphere(GetWorld(), Volume->GetComponentLocation(), Volume->GetScaledSphereRadius(), 10, Color, false, 0.f, 0, 0.5f);
+	};
+	Mark(HeadVolume, FColor::Cyan);
+	Mark(TorsoVolume, FColor::Green);
+	Mark(GuardVolume, FColor::Yellow);
+#endif
+}
+
+void AFBBoxerCharacter::UpdateQueryVolumes()
+{
+	if (!GuardVolume)
+	{
+		return;
+	}
+	const EFBGuardState Guard = CombatComponent ? CombatComponent->GetGuardState() : EFBGuardState::Open;
+	if (Guard == EFBGuardState::High)
+	{
+		GuardVolume->SetRelativeLocation(FVector(26.f, 0.f, 58.f));
+		GuardVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	}
+	else if (Guard == EFBGuardState::Low)
+	{
+		GuardVolume->SetRelativeLocation(FVector(26.f, 0.f, -6.f));
+		GuardVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	}
+	else
+	{
+		GuardVolume->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+}
+
 void AFBBoxerCharacter::ServerSetFacingOffset_Implementation(float OffsetDegrees)
 {
 	const float FaceLimit = bLooseMovement ? 72.f : MaxFacingOffsetDegrees;
@@ -850,6 +1030,7 @@ void AFBBoxerCharacter::ApplyPlaceholderAppearance(bool bIsOpponent)
 
 void AFBBoxerCharacter::RefreshCombatPresentation()
 {
+	UpdateQueryVolumes();
 }
 
 void AFBBoxerCharacter::UpdateDisplayedPunch(float DeltaSeconds)
@@ -1489,23 +1670,84 @@ void AFBBoxerCharacter::EnsureRuntimeInput()
 	RightThumbAction = Bundle.RightThumb;
 }
 
+void AFBBoxerCharacter::SetFightMappingActive(bool bActive)
+{
+	if (bActive)
+	{
+		ApplyMappingContext();
+	}
+	else
+	{
+		ClearMappingContext();
+	}
+}
+
+bool AFBBoxerCharacter::ControllerWantsFightMapping() const
+{
+	if (const AFBSparringPlayerController* Sparring = Cast<AFBSparringPlayerController>(GetController()))
+	{
+		return Sparring->WantsFightMapping();
+	}
+	return true;
+}
+
+void AFBBoxerCharacter::ClearMappingContext()
+{
+	ULocalPlayer* LocalPlayer = FightMappingPlayer.Get();
+	if (!LocalPlayer)
+	{
+		if (const APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			LocalPlayer = PC->GetLocalPlayer();
+		}
+	}
+	if (!LocalPlayer || !DefaultMappingContext)
+	{
+		return;
+	}
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
+	{
+		Subsystem->RemoveMappingContext(DefaultMappingContext);
+	}
+}
+
 void AFBBoxerCharacter::ApplyMappingContext()
 {
 	EnsureRuntimeInput();
+	if (!ControllerWantsFightMapping())
+	{
+		ClearMappingContext();
+		return;
+	}
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC)
 	{
 		return;
 	}
 
+	ULocalPlayer* LocalPlayer = PC->GetLocalPlayer();
+	FightMappingPlayer = LocalPlayer;
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
-		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
 	{
 		if (DefaultMappingContext)
 		{
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
 		}
 	}
+}
+
+void AFBBoxerCharacter::UnPossessed()
+{
+	ClearMappingContext();
+	Super::UnPossessed();
+}
+
+void AFBBoxerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ClearMappingContext();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AFBBoxerCharacter::RefreshFightCamera()
@@ -1642,6 +1884,7 @@ void AFBBoxerCharacter::Tick(float DeltaSeconds)
 		}
 	}
 
+	UpdateQueryVolumes();
 	RefreshCombatPresentation();
 	UpdateBoxerPose(DeltaSeconds);
 }
@@ -1870,10 +2113,6 @@ void AFBBoxerCharacter::Move(const FInputActionValue& Value)
 		RefreshBlockHeight();
 		return;
 	}
-	if (Axis.SizeSquared() < FMath::Square(0.35f))
-	{
-		Axis = FVector2D::ZeroVector;
-	}
 	const float Dt = GetWorld() ? FMath::Max(GetWorld()->GetDeltaSeconds(), 0.001f) : 0.016f;
 	SmoothedMoveStick = FMath::Vector2DInterpTo(SmoothedMoveStick, Axis, Dt, 8.f);
 	PushSmoothedMove();
@@ -1903,24 +2142,25 @@ void AFBBoxerCharacter::OnMoveReleased(const FInputActionValue& Value)
 
 void AFBBoxerCharacter::OnTurnStick(const FInputActionValue& Value)
 {
+	// Explicit rule: one right-stick sample either yaws the shoulders or throws a punch.
+	// It does not do both. The mapping dead zone stays at 0.12. This 0.55 flick is the only punch gate.
+	constexpr float PunchFlickThreshold = 0.55f;
 	const FVector2D Axis = Value.Get<FVector2D>();
 	CachedRightStick = Axis;
 	if (bKnockedDown)
 	{
 		return;
 	}
+	if (Axis.Size() >= PunchFlickThreshold)
+	{
+		TryStickPunch();
+		return;
+	}
+	bPunchStickConsumed = false;
 	if (!bInClinch)
 	{
 		const float FaceLimit = bLooseMovement ? 72.f : MaxFacingOffsetDegrees;
 		FacingYawOffsetTarget = FMath::Clamp(Axis.X, -1.f, 1.f) * FaceLimit;
-	}
-	if (Axis.Size() < 0.72f)
-	{
-		bPunchStickConsumed = false;
-	}
-	else
-	{
-		TryStickPunch();
 	}
 }
 
@@ -1938,12 +2178,9 @@ void AFBBoxerCharacter::OnPunchStickReleased()
 
 void AFBBoxerCharacter::OnPunchStick(const FInputActionValue& Value)
 {
-	const FVector2D Axis = Value.Get<FVector2D>();
-	if (Axis.SizeSquared() > CachedRightStick.SizeSquared())
-	{
-		CachedRightStick = Axis;
-	}
-	TryStickPunch();
+	// The right stick is mapped only to Turn. This action has no key, so it cannot
+	// throw a second punch from the same deflection.
+	(void)Value;
 }
 
 void AFBBoxerCharacter::OnJab()
@@ -2171,7 +2408,7 @@ void AFBBoxerCharacter::OnRightThumbReleased()
 
 bool AFBBoxerCharacter::StickInCone(float CenterDegrees, float HalfDegrees) const
 {
-	if (CachedRightStick.Size() < 0.62f)
+	if (CachedRightStick.Size() < 0.55f)
 	{
 		return false;
 	}
@@ -2245,7 +2482,7 @@ EFBAttackId AFBBoxerCharacter::MirrorForStance(EFBAttackId Attack) const
 
 EFBAttackId AFBBoxerCharacter::AttackFromStick() const
 {
-	if (CachedRightStick.Size() < 0.72f)
+	if (CachedRightStick.Size() < 0.55f)
 	{
 		return EFBAttackId::None;
 	}
@@ -2454,41 +2691,91 @@ void AFBBoxerCharacter::SubmitLocalIntent(EFBAttackId Attack, bool bGuardHeld, E
 		}
 	}
 
-	if (Attack != EFBAttackId::None && IsLocallyControlled() && GEngine)
-	{
-		const TCHAR* Label = TEXT("Punch");
-		switch (Attack)
-		{
-		case EFBAttackId::Jab: Label = TEXT("Jab"); break;
-		case EFBAttackId::Cross: Label = TEXT("Straight"); break;
-		case EFBAttackId::LeadHook: Label = TEXT("Lead hook"); break;
-		case EFBAttackId::RearHook: Label = TEXT("Rear hook"); break;
-		case EFBAttackId::LeadUppercut: Label = TEXT("Lead uppercut"); break;
-		case EFBAttackId::RearUppercut: Label = TEXT("Rear uppercut"); break;
-		default: break;
-		}
-		const FString Line = Intent.bBodyTarget
-			? FString::Printf(TEXT("%s — body%s"), Label, Intent.bPowerPunch ? TEXT(" — power") : TEXT(""))
-			: FString::Printf(TEXT("%s%s"), Label, Intent.bPowerPunch ? TEXT(" — power") : TEXT(""));
-		GEngine->AddOnScreenDebugMessage(1, 0.9f, FColor::White, Line);
-	}
-
-	if ((Attack == EFBAttackId::LeadHook || Attack == EFBAttackId::RearHook) && CombatComponent)
-	{
-		BeginHookFacingLock(CombatComponent->StartupSeconds + CombatComponent->ActiveWindowSeconds + 0.12f);
-	}
-
 	AActor* Target = FindCombatTarget();
 	if (HasAuthority())
 	{
-		if (CombatComponent)
-		{
-			CombatComponent->ServerTryProcessIntent(Intent, Target);
-		}
+		const EFBIntentResult Result = CombatComponent
+			? CombatComponent->ServerTryProcessIntent(Intent, Target)
+			: EFBIntentResult::RejectedNoAuthority;
+		ReportIntentResult(Result, Attack);
 	}
 	else
 	{
 		ServerSubmitCombatIntent(Intent);
+	}
+}
+
+void AFBBoxerCharacter::ReportIntentResult(EFBIntentResult Result, EFBAttackId Attack) const
+{
+#if UE_BUILD_SHIPPING
+	(void)Result;
+	(void)Attack;
+#else
+	if (!IsLocallyControlled() || !GEngine || Attack == EFBAttackId::None)
+	{
+		return;
+	}
+	const TCHAR* Name = TEXT("Punch");
+	switch (Attack)
+	{
+	case EFBAttackId::Jab: Name = TEXT("Jab"); break;
+	case EFBAttackId::Cross: Name = TEXT("Straight"); break;
+	case EFBAttackId::LeadHook: Name = TEXT("Lead hook"); break;
+	case EFBAttackId::RearHook: Name = TEXT("Rear hook"); break;
+	case EFBAttackId::LeadUppercut: Name = TEXT("Lead uppercut"); break;
+	case EFBAttackId::RearUppercut: Name = TEXT("Rear uppercut"); break;
+	default: break;
+	}
+	const TCHAR* Why = TEXT("rejected");
+	FColor Color = FColor::Red;
+	switch (Result)
+	{
+	case EFBIntentResult::Accepted: Why = TEXT("accepted"); Color = FColor::White; break;
+	case EFBIntentResult::Buffered: Why = TEXT("buffered"); Color = FColor::Yellow; break;
+	case EFBIntentResult::RejectedDown: Why = TEXT("rejected — down"); break;
+	case EFBIntentResult::RejectedSequence: Why = TEXT("rejected — stale input"); break;
+	case EFBIntentResult::RejectedSchema: Why = TEXT("rejected — schema"); break;
+	case EFBIntentResult::RejectedPhase: Why = TEXT("rejected — punch still out"); break;
+	case EFBIntentResult::RejectedEnergy: Why = TEXT("rejected — no energy"); break;
+	case EFBIntentResult::RejectedBreak: Why = TEXT("rejected — bell or break"); break;
+	case EFBIntentResult::RejectedNoAuthority: Why = TEXT("rejected — no authority"); break;
+	default: break;
+	}
+	const FString Line = (Result == EFBIntentResult::Accepted || Result == EFBIntentResult::Buffered)
+		? FString::Printf(TEXT("%s — %s"), Name, Why)
+		: FString::Printf(TEXT("%s — %s"), Why, Name);
+	GEngine->AddOnScreenDebugMessage(7, 1.1f, Color, Line);
+#endif
+}
+
+void AFBBoxerCharacter::ClientReportIntent_Implementation(EFBIntentResult Result, EFBAttackId Attack)
+{
+	ReportIntentResult(Result, Attack);
+}
+
+void AFBBoxerCharacter::AuthorityPrepareForRematch()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	HeadDamage = 0.f;
+	BodyDamage = 0.f;
+	Stun = 0.f;
+	AccumulatedDamage = 0.f;
+	HeadShock = 0.f;
+	BodyShock = 0.f;
+	PendingDazeStun = 0.f;
+	CutSeverity = 0.f;
+	BruiseSeverity = 0.f;
+	BlockHealth = BlockHealthMax;
+	AppliedAttackInstanceIds.Reset();
+	ClinchTurnMeter = 0.f;
+	SetKnockedDown(false);
+	AuthoritySetClinch(false);
+	if (CombatComponent)
+	{
+		CombatComponent->ResetForRematch();
 	}
 }
 
@@ -2499,15 +2786,21 @@ bool AFBBoxerCharacter::ServerSubmitCombatIntent_Validate(const FFBCombatIntent&
 
 void AFBBoxerCharacter::ServerSubmitCombatIntent_Implementation(const FFBCombatIntent& Intent)
 {
+	EFBIntentResult Result = EFBIntentResult::RejectedNoAuthority;
 	if (Intent.RingAction == EFBRingAction::TakeAKnee)
 	{
 		AuthorityTakeAKnee();
-		return;
+		Result = IsKnockedDown() ? EFBIntentResult::Accepted : EFBIntentResult::RejectedBreak;
 	}
-	if (CombatComponent)
+	else if (CombatComponent)
 	{
-		CombatComponent->ServerTryProcessIntent(Intent, FindCombatTarget());
+		Result = CombatComponent->ServerTryProcessIntent(Intent, FindCombatTarget());
 	}
+#if !UE_BUILD_SHIPPING
+	ClientReportIntent(Result, Intent.Attack);
+#else
+	(void)Result;
+#endif
 }
 
 AFBBoxerCharacter* AFBBoxerCharacter::FindOpponent() const

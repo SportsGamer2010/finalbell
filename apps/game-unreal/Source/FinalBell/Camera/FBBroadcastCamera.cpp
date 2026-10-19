@@ -1,12 +1,33 @@
 #include "Camera/FBBroadcastCamera.h"
 #include "Combat/FBBoxerCharacter.h"
+#include "Ring/FBP1ArenaBootstrap.h"
 #include "Training/FBHeavyBag.h"
 #include "Camera/CameraComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
+
+namespace
+{
+	/** 20 ft rope line. The lens stays outside this, plus RopeClearanceCm. */
+	constexpr float RopeHalfCm = 305.f;
+	constexpr float RopeClearanceCm = 120.f;
+	/** Gym brick is centered at 1400 cm. This keeps the lens off that wall. The dark bowl is farther out. */
+	constexpr float RoomHalfCm = 1300.f;
+	/** Extra width past each fighter so a glove and an elbow stay inside the frame. */
+	constexpr float GloveMarginCm = 85.f;
+	constexpr float HeadPadCm = 32.f;
+	constexpr float FeetPadCm = 20.f;
+	/** Added to the clinch distance so the close shot is not glued to the crop line. */
+	constexpr float ClosePadCm = 64.f;
+	constexpr float FitPadCm = 40.f;
+	/** Keep the lens this far from a fighter's center so it does not sit inside a glove. */
+	constexpr float FighterClearCm = 170.f;
+}
 
 AFBBroadcastCamera::AFBBroadcastCamera()
 {
@@ -36,6 +57,8 @@ AFBBroadcastCamera::AFBBroadcastCamera()
 void AFBBroadcastCamera::BeginPlay()
 {
 	Super::BeginPlay();
+	SmoothedFOV = FightFOV;
+	SmoothedSeparation = ZoomFarSeparation;
 	if (Camera)
 	{
 		Camera->SetFieldOfView(FightFOV);
@@ -96,11 +119,145 @@ void AFBBroadcastCamera::SetFighters(AFBBoxerCharacter* Player, AFBBoxerCharacte
 		SnapToFrame();
 		ForcePossessedView();
 	}
+	else if (Player && !Opponent && !bTrainingFramed)
+	{
+		for (TActorIterator<AFBHeavyBag> It(GetWorld()); It; ++It)
+		{
+			if (!IsValid(*It) || !It->IsActiveBag())
+			{
+				continue;
+			}
+			const FVector BagLine = (It->GetStrikeCenter() - Player->GetActorLocation()).GetSafeNormal2D();
+			if (!BagLine.IsNearlyZero())
+			{
+				FVector Side(-BagLine.Y, BagLine.X, 0.f);
+				if (FVector::DotProduct(Side, FVector(0.f, -1.f, 0.f)) < 0.f)
+				{
+					Side *= -1.f;
+				}
+				OrbitYaw = Side.Rotation().Yaw;
+				OrbitPitch = 6.f;
+			}
+			bTrainingFramed = true;
+			bHasFramed = true;
+			SnapToFrame();
+			break;
+		}
+	}
 }
 
 void AFBBroadcastCamera::AddOrbitInput(FVector2D Axis)
 {
 	PendingOrbitInput += Axis;
+}
+
+bool AFBBroadcastCamera::IsLiveBoxer(const AFBBoxerCharacter* Boxer) const
+{
+	if (!IsValid(Boxer) || Boxer->IsActorBeingDestroyed() || Boxer->IsHidden())
+	{
+		return false;
+	}
+	// A benched PIE pawn is unpossessed and then destroyed. It is not the tagged opponent.
+	if (Boxer->IsPlayerControlled() || Boxer->GetController() != nullptr)
+	{
+		return true;
+	}
+	if (Boxer->ActorHasTag(TEXT("FB_P1Opponent")))
+	{
+		return true;
+	}
+	// The other human's controller does not exist on this client. Their player state does.
+	return Boxer->GetPlayerState() != nullptr && GetNetMode() == NM_Client;
+}
+
+bool AFBBroadcastCamera::ResolveLivePair(AFBBoxerCharacter*& OutPlayer, AFBBoxerCharacter*& OutOpponent) const
+{
+	OutPlayer = nullptr;
+	OutOpponent = nullptr;
+	if (!GetWorld())
+	{
+		return false;
+	}
+
+	AFBBoxerCharacter* StoredPlayer = IsLiveBoxer(PlayerFighter.Get()) ? PlayerFighter.Get() : nullptr;
+	AFBBoxerCharacter* StoredOpponent = IsLiveBoxer(OpponentFighter.Get()) ? OpponentFighter.Get() : nullptr;
+	AFBBoxerCharacter* Tagged = nullptr;
+	AFBBoxerCharacter* Fallback = nullptr;
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	{
+		AFBBoxerCharacter* Boxer = *It;
+		if (!IsLiveBoxer(Boxer))
+		{
+			continue;
+		}
+		if (Boxer->ActorHasTag(TEXT("FB_P1Opponent")))
+		{
+			Tagged = Boxer;
+		}
+		else if (!Fallback)
+		{
+			Fallback = Boxer;
+		}
+	}
+
+	OutPlayer = StoredPlayer ? StoredPlayer : Fallback;
+	if (StoredOpponent && StoredOpponent != OutPlayer)
+	{
+		OutOpponent = StoredOpponent;
+	}
+	else if (Tagged && Tagged != OutPlayer)
+	{
+		OutOpponent = Tagged;
+	}
+	else if (Fallback && Fallback != OutPlayer)
+	{
+		OutOpponent = Fallback;
+	}
+	if (OutPlayer && !OutOpponent)
+	{
+		for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+		{
+			if (IsLiveBoxer(*It) && *It != OutPlayer)
+			{
+				OutOpponent = *It;
+				break;
+			}
+		}
+	}
+	return OutPlayer && OutOpponent && OutPlayer != OutOpponent;
+}
+
+float AFBBroadcastCamera::ResolveViewAspect() const
+{
+	float Aspect = (Camera && Camera->AspectRatio > 0.1f) ? Camera->AspectRatio : (16.f / 9.f);
+	if (GEngine && GEngine->GameViewport)
+	{
+		FVector2D Size(0.f, 0.f);
+		GEngine->GameViewport->GetViewportSize(Size);
+		if (Size.Y > 1.f)
+		{
+			Aspect = Size.X / Size.Y;
+		}
+	}
+	return FMath::Clamp(Aspect, 1.f, 3.f);
+}
+
+void AFBBroadcastCamera::UpdateSmoothedSeparation(float DeltaSeconds)
+{
+	AFBBoxerCharacter* A = nullptr;
+	AFBBoxerCharacter* B = nullptr;
+	if (!ResolveLivePair(A, B))
+	{
+		return;
+	}
+	const float Raw = FVector::Dist2D(A->GetActorLocation(), B->GetActorLocation());
+	if (!bZoomInitialized)
+	{
+		SmoothedSeparation = Raw;
+		bZoomInitialized = true;
+		return;
+	}
+	SmoothedSeparation = FMath::FInterpTo(SmoothedSeparation, Raw, DeltaSeconds, ZoomInterpSpeed);
 }
 
 void AFBBroadcastCamera::AutoFindFighters()
@@ -111,16 +268,31 @@ void AFBBroadcastCamera::AutoFindFighters()
 	if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
 	{
 		Local = Cast<AFBBoxerCharacter>(PC->GetPawn());
+		if (!IsLiveBoxer(Local))
+		{
+			Local = nullptr;
+		}
 	}
 
-	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	if (GetWorld())
 	{
-		if (*It == Local)
+		for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
 		{
-			continue;
+			AFBBoxerCharacter* Boxer = *It;
+			if (!IsLiveBoxer(Boxer) || Boxer == Local)
+			{
+				continue;
+			}
+			if (Boxer->ActorHasTag(TEXT("FB_P1Opponent")))
+			{
+				Other = Boxer;
+				break;
+			}
+			if (!Other)
+			{
+				Other = Boxer;
+			}
 		}
-		Other = *It;
-		break;
 	}
 
 	if (Local)
@@ -133,9 +305,14 @@ void AFBBroadcastCamera::AutoFindFighters()
 	}
 }
 
-void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) const
+void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt, float& OutFOV) const
 {
-	const AFBBoxerCharacter* Player = PlayerFighter.Get();
+	OutFOV = FightFOV;
+
+	AFBBoxerCharacter* LivePlayer = nullptr;
+	AFBBoxerCharacter* LiveOpponent = nullptr;
+	const bool bPair = ResolveLivePair(LivePlayer, LiveOpponent);
+	const AFBBoxerCharacter* Player = bPair ? LivePlayer : (IsLiveBoxer(PlayerFighter.Get()) ? PlayerFighter.Get() : nullptr);
 	if (!Player)
 	{
 		OutLocation = GetActorLocation();
@@ -148,7 +325,7 @@ void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) 
 	const FVector PlayerFeet = PlayerLoc - FVector(0.f, 0.f, PlayerHalf);
 
 	const AFBHeavyBag* TrainingBag = nullptr;
-	if (!OpponentFighter.IsValid())
+	if (!bPair)
 	{
 		for (TActorIterator<AFBHeavyBag> It(GetWorld()); It; ++It)
 		{
@@ -162,14 +339,15 @@ void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) 
 
 	FVector OppLoc = PlayerLoc + Player->GetActorForwardVector().GetSafeNormal2D() * 180.f;
 	float OppHalf = PlayerHalf;
-	if (const AFBBoxerCharacter* Opponent = OpponentFighter.Get())
+	if (bPair && LiveOpponent)
 	{
-		OppLoc = Opponent->GetActorLocation();
-		OppHalf = FMath::Max(Opponent->GetStandingHalfHeight(), 1.f);
+		OppLoc = LiveOpponent->GetActorLocation();
+		OppHalf = FMath::Max(LiveOpponent->GetStandingHalfHeight(), 1.f);
 	}
 	else if (TrainingBag)
 	{
 		OppLoc = TrainingBag->GetStrikeCenter();
+		OppHalf = 0.f;
 	}
 	const FVector OppFeet = OppLoc - FVector(0.f, 0.f, OppHalf);
 	const float FeetZ = FMath::Min(PlayerFeet.Z, OppFeet.Z);
@@ -180,37 +358,140 @@ void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) 
 	{
 		Line = Player->GetActorForwardVector().GetSafeNormal2D();
 	}
-	const FVector Side = FRotator(0.f, OrbitYaw, 0.f).Vector().GetSafeNormal2D();
+	FVector Side = FRotator(0.f, OrbitYaw, 0.f).Vector().GetSafeNormal2D();
+	if (Side.IsNearlyZero())
+	{
+		Side = FVector(0.f, -1.f, 0.f);
+	}
 
 	if (TrainingBag)
 	{
-		// Close enough that a 46 cm bag is a bag. The ringside distance frames the whole ring.
-		const float FrameDistance = 340.f;
-		OutLocation = Mid + Side * FrameDistance;
-		OutLocation.Z = FeetZ + 155.f + FMath::Max(0.f, OrbitPitch) * 4.f;
-		OutLookAt = FVector(Mid.X, Mid.Y, FeetZ + 110.f);
+		// Three-quarter view: off the bag row, behind the fighter, inside the room.
+		// One fighter and a bag. The separation zoom does not run.
+		const FFBBagRoomLayout Room = UFBP1ArenaBootstrap::GetBagRoomLayout();
+		const FVector Back = -Line;
+		OutLocation = Mid + Side * Room.CameraSide + Back * Room.CameraBack;
+		OutLocation.Z = FeetZ + Room.CameraHeight + FMath::Max(0.f, OrbitPitch) * 3.f;
+		OutLocation.X = FMath::Clamp(OutLocation.X, -Room.InnerHalfX + 80.f, Room.InnerHalfX - 80.f);
+		OutLocation.Y = FMath::Clamp(OutLocation.Y, Room.SouthInnerY + 80.f, Room.BagY - 120.f);
+		OutLookAt = FVector(Mid.X, Mid.Y, FeetZ + Room.CameraLook);
 		return;
 	}
 
 	const float HalfTan = FMath::Tan(FMath::DegreesToRadians(FMath::Max(FightFOV, 45.f) * 0.5f));
-	const float Radius = (RingHalfExtent / FMath::Max(HalfTan, 0.25f)) + RingHalfExtent * 0.35f + OutsideMargin;
+	const float WideRadius = (RingHalfExtent / FMath::Max(HalfTan, 0.25f)) + RingHalfExtent * 0.35f + OutsideMargin;
 	const float Along = FMath::Clamp(FVector::DotProduct(Mid, Line), -DollyLimit, DollyLimit);
+	const FVector Dolly = Line * (Along * DollyFollow);
 
-	OutLocation = Side * Radius + Line * (Along * DollyFollow);
+	if (!bPair)
+	{
+		// No second live boxer. Stay on the wide ringside offset instead of zooming in.
+		OutLocation = Side * WideRadius + Dolly;
+		OutLocation.Z = FeetZ + HeightAboveFeet + FMath::Max(0.f, OrbitPitch) * 6.f;
+		const FVector RingCenter(0.f, 0.f, FeetZ);
+		OutLookAt = FVector(
+			FMath::Lerp(RingCenter.X, Mid.X, 0.65f),
+			FMath::Lerp(RingCenter.Y, Mid.Y, 0.65f),
+			FeetZ + (PlayerHalf * 2.f) * LookHeightFraction);
+		return;
+	}
+
+	const float Aspect = ResolveViewAspect();
+	const float VertTan = HalfTan / FMath::Max(Aspect, 1.f);
+	const float BodyHeight = FMath::Max(PlayerHalf, OppHalf) * 2.f;
+	const float HeadAbove = BodyHeight * (1.f - LookHeightFraction) + HeadPadCm;
+	const float FeetBelow = BodyHeight * LookHeightFraction + FeetPadCm;
+	const float VerticalExtent = FMath::Max(HeadAbove, FeetBelow);
+	const float CloseRadius = VerticalExtent / FMath::Max(VertTan, 0.05f) + ClosePadCm;
+
+	const float Separation = FMath::Max(SmoothedSeparation, ZoomNearSeparation);
+	const float Span = FMath::Max(ZoomFarSeparation - ZoomNearSeparation, 1.f);
+	const float Alpha = FMath::Clamp((Separation - ZoomNearSeparation) / Span, 0.f, 1.f);
+	const float HalfSpan = Separation * 0.5f + GloveMarginCm;
+	const float FitDist = FMath::Max(
+		HalfSpan / FMath::Max(HalfTan, 0.05f),
+		VerticalExtent / FMath::Max(VertTan, 0.05f)) + FitPadCm;
+
+	const float SideAbs = FMath::Max(FMath::Max(FMath::Abs(Side.X), FMath::Abs(Side.Y)), 0.15f);
+	const float MinRadius = (RopeHalfCm + RopeClearanceCm) / SideAbs;
+	const float MaxRadius = RoomHalfCm / SideAbs;
+
+	float Radius = FMath::Lerp(CloseRadius, WideRadius, Alpha);
+	const FVector MidXY(Mid.X, Mid.Y, 0.f);
+	for (int32 Step = 0; Step < 4; ++Step)
+	{
+		const float Dist = FVector::Dist2D(Side * Radius + Dolly, MidXY);
+		if (Dist >= FitDist)
+		{
+			break;
+		}
+		Radius += FitDist - Dist;
+	}
+	const float UnclampedRadius = Radius;
+	Radius = FMath::Clamp(Radius, MinRadius, MaxRadius);
+
+	OutLocation = Side * Radius + Dolly;
 	OutLocation.Z = FeetZ + HeightAboveFeet + FMath::Max(0.f, OrbitPitch) * 6.f;
+
+	const FVector Fighters[2] = { PlayerLoc, OppLoc };
+	for (const FVector& Fighter : Fighters)
+	{
+		const FVector Flat(OutLocation.X - Fighter.X, OutLocation.Y - Fighter.Y, 0.f);
+		const float Dist = Flat.Size();
+		if (Dist < FighterClearCm && Dist > 1.f)
+		{
+			const FVector Shift = Flat / Dist * (FighterClearCm - Dist);
+			OutLocation.X += Shift.X;
+			OutLocation.Y += Shift.Y;
+		}
+	}
+	if (FMath::Abs(OutLocation.X) < RopeHalfCm + RopeClearanceCm
+		&& FMath::Abs(OutLocation.Y) < RopeHalfCm + RopeClearanceCm)
+	{
+		const FVector Pushed = Side * MinRadius;
+		OutLocation.X = Pushed.X;
+		OutLocation.Y = Pushed.Y;
+	}
+	OutLocation.X = FMath::Clamp(OutLocation.X, -RoomHalfCm, RoomHalfCm);
+	OutLocation.Y = FMath::Clamp(OutLocation.Y, -RoomHalfCm, RoomHalfCm);
 
 	const FVector RingCenter(0.f, 0.f, FeetZ);
 	OutLookAt = FVector(
 		FMath::Lerp(RingCenter.X, Mid.X, 0.65f),
 		FMath::Lerp(RingCenter.Y, Mid.Y, 0.65f),
-		FeetZ + (PlayerHalf * 2.f) * LookHeightFraction);
+		FeetZ + BodyHeight * LookHeightFraction);
+
+	const float ActualDist = FMath::Max(FVector::Dist2D(OutLocation, MidXY), 50.f);
+	const float NeededTan = FMath::Max(HalfSpan / ActualDist, (VerticalExtent * Aspect) / ActualDist);
+	const float NeededFOV = 2.f * FMath::RadiansToDegrees(FMath::Atan(NeededTan));
+	if (NeededFOV > FightFOV + 0.25f)
+	{
+		OutFOV = FMath::Min(NeededFOV, FightFOV + ZoomFOVWiden);
+	}
+	else if (UnclampedRadius < MinRadius - 1.f && Alpha < 0.5f)
+	{
+		OutFOV = FMath::Clamp(NeededFOV, FightFOV - ZoomFOVTighten, FightFOV);
+	}
 }
 
 void AFBBroadcastCamera::SnapToFrame()
 {
+	AFBBoxerCharacter* A = nullptr;
+	AFBBoxerCharacter* B = nullptr;
+	if (ResolveLivePair(A, B))
+	{
+		SmoothedSeparation = FVector::Dist2D(A->GetActorLocation(), B->GetActorLocation());
+		bZoomInitialized = true;
+	}
+	float FOV = FightFOV;
 	FVector Location;
 	FVector LookAt;
-	ComputeFrame(Location, LookAt);
+	ComputeFrame(Location, LookAt, FOV);
+	SmoothedFOV = FOV;
+	if (Camera && !bRefereeView)
+	{
+		Camera->SetFieldOfView(SmoothedFOV);
+	}
 	SetActorLocation(Location);
 	SetActorRotation(UKismetMathLibrary::FindLookAtRotation(Location, LookAt));
 }
@@ -231,13 +512,16 @@ void AFBBroadcastCamera::ClearRefereeView()
 	bRefereeView = false;
 	if (Camera)
 	{
-		Camera->SetFieldOfView(FightFOV);
+		Camera->SetFieldOfView(bZoomInitialized ? SmoothedFOV : FightFOV);
 	}
 }
 
 void AFBBroadcastCamera::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	// Keep the fight gap current during a knockdown, but do not move this shot.
+	UpdateSmoothedSeparation(DeltaSeconds);
 
 	if (bRefereeView)
 	{
@@ -252,18 +536,26 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 	{
 		AutoFindFighters();
 	}
-	if (!PlayerFighter.IsValid())
+	AFBBoxerCharacter* LiveA = nullptr;
+	AFBBoxerCharacter* LiveB = nullptr;
+	const bool bLivePair = ResolveLivePair(LiveA, LiveB);
+	if (!PlayerFighter.IsValid() && !bLivePair)
 	{
 		return;
 	}
 
-	if (!OpponentFighter.IsValid() && !bTrainingFramed)
+	if (!bLivePair && PlayerFighter.IsValid())
 	{
 		for (TActorIterator<AFBHeavyBag> It(GetWorld()); It; ++It)
 		{
 			if (!IsValid(*It) || !It->IsActiveBag())
 			{
 				continue;
+			}
+			const float Dist = FVector::Dist2D(PlayerFighter->GetActorLocation(), It->GetStrikeCenter());
+			if (bTrainingFramed && Dist < 1500.f)
+			{
+				break;
 			}
 			const FVector Line = (It->GetStrikeCenter() - PlayerFighter->GetActorLocation()).GetSafeNormal2D();
 			if (!Line.IsNearlyZero())
@@ -274,7 +566,7 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 					Side *= -1.f;
 				}
 				OrbitYaw = Side.Rotation().Yaw;
-				OrbitPitch = 10.f;
+				OrbitPitch = 6.f;
 			}
 			bTrainingFramed = true;
 			bHasFramed = true;
@@ -296,9 +588,9 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 		OrbitInputHoldTime = FMath::Max(0.f, OrbitInputHoldTime - DeltaSeconds);
 	}
 
-	if (bAutoAlignWhenIdle && OrbitInputHoldTime <= 0.f && OpponentFighter.IsValid())
+	if (bAutoAlignWhenIdle && OrbitInputHoldTime <= 0.f && bLivePair)
 	{
-		const FVector Line = (OpponentFighter->GetActorLocation() - PlayerFighter->GetActorLocation()).GetSafeNormal2D();
+		const FVector Line = (LiveB->GetActorLocation() - LiveA->GetActorLocation()).GetSafeNormal2D();
 		if (!Line.IsNearlyZero())
 		{
 			FVector DesiredSide(-Line.Y, Line.X, 0.f);
@@ -316,7 +608,20 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 
 	FVector DesiredLocation;
 	FVector LookAt;
-	ComputeFrame(DesiredLocation, LookAt);
+	float DesiredFOV = FightFOV;
+	ComputeFrame(DesiredLocation, LookAt, DesiredFOV);
+	if (!bZoomInitialized)
+	{
+		SmoothedFOV = DesiredFOV;
+	}
+	else
+	{
+		SmoothedFOV = FMath::FInterpTo(SmoothedFOV, DesiredFOV, DeltaSeconds, ZoomInterpSpeed);
+	}
+	if (Camera)
+	{
+		Camera->SetFieldOfView(SmoothedFOV);
+	}
 
 	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), DesiredLocation, DeltaSeconds, LocationInterpSpeed);
 	SetActorLocation(NewLocation);

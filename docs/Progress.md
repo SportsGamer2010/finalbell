@@ -358,6 +358,54 @@ Matched the Wilder/Holmes framing in `https://youtu.be/Hx1lo0UHjJY` (chest-high 
 - Reading notes: `docs/CodeGuide.md`. Decision D-026.
 - Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Failed** (`Result: Failed (OtherCompilationError)`, 9.49 s). UHT wrote the generated files, then Unreal said Live Coding is active. The editor was not closed. PIE was not run. Press Ctrl+Alt+F11 in the editor to compile.
 
+### 2026-10-19 — Input buffer, corners, swept contact, bout gaps
+
+HEAD was `065fcd25ede8a86c6d0f3f269caa2913a7cc483e` on `cursor/p1-visible-arena-dualsense-input`. That commit already had the bag room, Down triggers for block/weave/body/power, analog L2/R2, shoulder-tap rolls, style AI, the three judge pillars, the benched extra PIE pawn, movable gym lights, the split fighter screen, 16 premades, and server-owned hits. Those were not redone. No client damage field was added. `scripts/create_ring_map.py` was not run. No `.uasset` was created. `/Game/Maps/Ring_P1` was already in Content.
+
+- Stage 1 baseline: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (27.50 s) and linked `UnrealEditor-FinalBell.dll`. The editor was not running, so Live Coding did not block it.
+- Stage 2: block, weave, body, and power already used `UInputTriggerDown`. A held guard or modifier is remembered through Startup, Active, and Recovery and applied when the phase is idle again. One attack can queue in the last 125 ms of recovery, then it expires. A development message says accepted, buffered, or rejected and why. It does not print a punch name as if a rejected punch started. The right stick is mapped once. Below 0.55 it only yaws the shoulders. At or above 0.55 it throws one punch and does not also yaw. The 0.78 punch-stick gate is gone. Keys 1–6 and the face buttons still throw.
+- Stage 3: blue is the northwest corner and red is the southeast corner, inside `AFBRingBounds`, inset by the capsule radius, facing center. `SendFightersToCorners` is the first bell, the rematch, and the return after the round. Versus AI still places the confirming player and one AI. Multiplayer still places two humans and no AI. A later login does not rebuild the floor or the lights when that shell is already there.
+- Stage 4: the glove sphere sweeps across the active window. Head, torso, and guard are query-only volumes. A high guard in the way blocks a head shot. A body shot ignores that high guard. Damage is once per attacker, attack, and defender. The movement capsule is still 34 x 90, and the punch radii are still 40 / 48 / 50. `fb.DebugContact 1` draws the sweep. The bout HUD does not.
+- Stage 5: a new attack is refused during a knockdown, a rest, after the card, and while the bell is waiting. A punch already in Startup or Active still resolves, and the bell waits for that window. Pause on the card is Rematch, Main Menu, and Quit, on the existing pause path. The AI still sends `FFBCombatIntent`. Rounds were not added. FB-ENH-01 through FB-ENH-06 were not marked verified. Ranked play was not started.
+- Stage 6: the gym north wall and the bag-room south wall are split, with a wood hall and one movable light between them. The ring stays at the origin and the bag row stays at Y=2800. This is still engine cubes. Still missing: brick and wood textures, glove and bell and crowd audio, a crowd, ropes that are not cubes, and any licensed gym prop. A generated picture was not used as the level.
+- Stages 2–6 compiled together: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (46.89 s) and linked `UnrealEditor-FinalBell.dll`.
+- PIE was not run. The buffer, the corners, the sweep, the rematch, and the hall have not been watched in a fight. Decision D-027.
+
+### 2026-10-19 — Bag room balance
+
+The heavy-bag shell read as off balance because the pieces did not share one floor or one subject.
+
+- The gym floor and the wood hall both top out at Z=-90. The bag-room floor was centered at Z=-12 with thickness 24 cm, so its walk surface was Z=0 and its underside was Z=-24. That is a 90 cm step up from the hall, with 66 cm of air under the slab. The south wall bottom was Z=-5, so the brick floated 85 cm above the hall.
+- The room was 24 m by 18 m (scale 24 by 18 on the 100 cm cube), center (0, 2800, 0). Five bags hung through the middle at Y=2800, 340 cm apart, not on a wall. The beam was 20 m long, so each end stopped 179 cm short of the side walls, and its top (Z=270) sat 54 cm under the ceiling. It was a floating bar.
+- The mannequin capsule is `InitCapsuleSize(34, 90)`, then `BodyScale` 1.10, so the standing body is radius 37.4 cm and half-height 99 cm (198 cm tall). Training placed the feet at Z=4, 4 cm above that raised floor, and 115 cm south of the bag center. The gap from the capsule to the 46 cm bag was about 55 cm. Yaw 90 faced the bag. The pawn was not inside a bag and not in a corner.
+- The training camera sat 340 cm off the fighter-bag line, and 340 cm is the old row spacing. The lens landed at about X=-340, on the west neighbor, looking along the row.
+- The ring spots attenuate at 2200 cm and the hall bulb at 900 cm. Neither reaches Y=2800. The bag-room bulbs were Movable, but they lit the middle of the empty box.
+
+The shell now uses the gym walk surface. Interior is X ±560 cm and Y=1900 to 2680, with walls and a ceiling that meet that floor. The doorway matches the 280 cm hall, and the hall has side walls, a ceiling, and floor strips so the corridor is closed during training. The beam runs into both side walls. Five bags hang on it at Y=2525, spacing 200 cm, hang Z=162, so the leather bottom stays 86 cm off the floor. The fighter stands at the bag's X, 175 cm south, feet on Z=-90, facing +Y. About 4.1 m of floor is behind them and about 2 m of air is between them and a neighbor bag. The camera is 300 cm to the side and 290 cm back from the pair, clamped inside the walls, and two Movable spots plus three bulbs light the row and the fighter. The bout ring was not moved. Training still has no 3:00 clock and no knockdowns. `ApplyStrike` is unchanged, and the bag still overlaps the pawn.
+
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (25.69 s) and linked `UnrealEditor-FinalBell.dll`. Live Coding did not block it.
+- PIE was not run. Decision D-028.
+
+### 2026-10-19 — Ringside zoom follows the two fighters
+
+The fight camera stays on `AFBBroadcastCamera`. It measures the center-to-center gap of the two live boxers (the human and the AI, or the two humans) and ignores a benched or destroyed PIE pawn. **110 cm** is the clinch. **760 cm** is the far end, the diagonal of the ±270 cm playable box. The lens moves along the existing ringside offset: about **5.1 m** from ring center when they are at 110 cm on a flat side at 16:9, and about **8.9 m** at the wide end (the previous 62° ringside distance). It stays at least 120 cm outside the 305 cm rope line, 170 cm off a fighter, and inside ±1300 cm so it does not enter the ring or sit in the gym wall. The gap eases at 2.8 (about 0.35 s), then the camera eases onto that spot. Fight FOV stays **62°**, may tighten to **58°** when the ropes block a closer dolly, or open to **68°** when a wall blocks a wider one. The knockdown cut stays **42°** and does not take this zoom. Heavy-bag training still frames the fighter and the active bag. Hits, stamina, corners, and the server were not changed.
+
+- Reading notes: `docs/CodeGuide.md`. Decision D-029.
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (27.10 s) and linked `UnrealEditor-FinalBell.dll`. The first pass failed to compile because `AutoFindFighters` was missing from the header. Live Coding did not block it.
+- PIE was not run.
+
+### 2026-10-19 — DualSense did nothing on the menu or in the fight
+
+The pad reached neither place. Menus used `FInputModeUIOnly`, and that mode calls `SetIgnoreInput(true)` on the viewport, so the player controller never saw face buttons, the D-pad, or the sticks. The menu widget only received a key if it already had focus, and PIE kept moving focus onto the viewport. Solo PIE also rewrote the pad's device id to the keyboard, so the confirming local player was not the device that owned the event.
+
+The fight mapping was only added, never removed. A menu could leave it off the local player that confirmed the bout, or leave it on after the window lost focus. The right-stick 0.55 punch gate was only on the right stick. It was not what silenced the left stick, the D-pad, or the face buttons. Those were dead because of the input mode and because the stick was gated three times: AxisConfig at 0.38/0.40, a second radial dead zone of 0.38, and `Move` zeroing anything under 0.35. A normal tilt never came through.
+
+`DefaultInput.ini` had also assigned DualSense buttons in Xbox order. On this pad the HID order is Square, Cross, Circle, Triangle, L1, R1, then the digital L2/R2 clicks, then Create, Options, L3, R3. Options, L3, and R3 were on bits the device does not use for those buttons. L2 and R2 stay the analog axes (`Gamepad_LeftTriggerAxis`, `Gamepad_RightTriggerAxis`). The D-pad stays the hat, which emits `Gamepad_DPad_*`.
+
+Menus (front end, mode select, fighter select, pause) now use Game and UI, focus the local player's widget, and read the left stick and D-pad directly. Cross accepts, Circle backs out, and Options toggles pause where pause exists. Opening a menu removes the fight mapping from that local player. Closing it, or the window coming back, puts Game Only and the fight mapping back on that same player. AxisConfig stick dead zones are 0. The left stick has one 0.22 radial zone. The right stick still yaws under 0.55 and punches at or above 0.55. Keyboard keys are unchanged. `docs/Controls_UndisputedCompetitor.md` was not edited. The PlayStation names are the same.
+
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (38.16 s) and linked `UnrealEditor-FinalBell.dll`. Live Coding did not block it.
+- PIE was not run. The pad was not watched. The events were not seen in a session.
 
 
 

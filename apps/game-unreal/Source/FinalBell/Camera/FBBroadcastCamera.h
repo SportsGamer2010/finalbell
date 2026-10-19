@@ -1,6 +1,8 @@
 // Final Bell — ringside broadcast camera.
 // Sits just outside the ropes, slightly above the canvas, and looks slightly down
 // so both fighters' feet and most of the ring stay in frame.
+// When two live boxers are far apart the same offset backs up. When they close,
+// it comes in. The knockdown shot does not use that zoom.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -109,6 +111,35 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera")
 	float AutoAlignIdleDelay = 0.28f;
 
+	/**
+	 * Center-to-center distance treated as a clinch (cm).
+	 * Capsules meet near 75 cm. 110 cm still has the gloves between the chests.
+	 */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "70.0"))
+	float ZoomNearSeparation = 110.f;
+
+	/**
+	 * Center-to-center distance treated as the wide shot (cm).
+	 * The playable box is ±270 cm, so the diagonal is about 760 cm.
+	 */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "200.0"))
+	float ZoomFarSeparation = 760.f;
+
+	/**
+	 * How fast the zoom chases the separation. 2.8 is about a 0.35 s lag.
+	 * The location ease on top of this keeps the dolly from popping.
+	 */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "0.5"))
+	float ZoomInterpSpeed = 2.8f;
+
+	/** Degrees the fight lens may tighten when the ropes stop a close dolly. */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "0.0", ClampMax = "8.0"))
+	float ZoomFOVTighten = 4.f;
+
+	/** Degrees the fight lens may open when a wall stops a wide dolly. */
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Camera", meta = (ClampMin = "0.0", ClampMax = "12.0"))
+	float ZoomFOVWiden = 6.f;
+
 	bool bRefereeView = false;
 	FVector RefereeEye = FVector::ZeroVector;
 	FVector RefereeLook = FVector::ZeroVector;
@@ -122,7 +153,16 @@ protected:
 	TWeakObjectPtr<AFBBoxerCharacter> PlayerFighter;
 	TWeakObjectPtr<AFBBoxerCharacter> OpponentFighter;
 
+	/** Smoothed center-to-center gap. Starts wide so the first frame is not a clinch. */
+	float SmoothedSeparation = 760.f;
+	float SmoothedFOV = 62.f;
+	bool bZoomInitialized = false;
+
+	bool IsLiveBoxer(const AFBBoxerCharacter* Boxer) const;
+	bool ResolveLivePair(AFBBoxerCharacter*& OutPlayer, AFBBoxerCharacter*& OutOpponent) const;
+	float ResolveViewAspect() const;
+	void UpdateSmoothedSeparation(float DeltaSeconds);
 	void AutoFindFighters();
-	void ComputeFrame(FVector& OutLocation, FVector& OutLookAt) const;
+	void ComputeFrame(FVector& OutLocation, FVector& OutLookAt, float& OutFOV) const;
 	void SnapToFrame();
 };

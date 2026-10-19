@@ -6,6 +6,7 @@
 #include "Combat/FBCombatTypes.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/SkyLight.h"
@@ -30,8 +31,6 @@ namespace
 
 	/** Half-size of a 20 ft pro ring inside the ropes (cm). */
 	constexpr float CanvasHalf = 305.f;
-	/** Opening center-to-center gap. Both heavyweights fill a medium shot. */
-	constexpr float OpeningHalfGap = 95.f;
 	/** Top of canvas Z. */
 	constexpr float CanvasTopZ = 0.f;
 
@@ -148,8 +147,13 @@ namespace
 
 		const float WallZ = 260.f;
 		const float WallH = 5.4f;
-		SpawnMeshActor(World, Cube, FVector(0.f, Room, WallZ), FRotator::ZeroRotator,
-			FVector(RoomScale, 0.45f, WallH), Brick, false);
+		// North wall is split. The gap is a hall toward the bag room, not an opening into the ring.
+		SpawnMeshActor(World, Cube, FVector(-770.f, Room, WallZ), FRotator::ZeroRotator,
+			FVector(12.6f, 0.45f, WallH), Brick, false);
+		SpawnMeshActor(World, Cube, FVector(770.f, Room, WallZ), FRotator::ZeroRotator,
+			FVector(12.6f, 0.45f, WallH), Brick, false);
+		SpawnMeshActor(World, Cube, FVector(0.f, 1650.f, -96.f), FRotator::ZeroRotator,
+			FVector(2.8f, 5.0f, 0.12f), Wood, true);
 		SpawnMeshActor(World, Cube, FVector(0.f, -Room, WallZ), FRotator::ZeroRotator,
 			FVector(RoomScale, 0.45f, WallH), BrickDark, false);
 		SpawnMeshActor(World, Cube, FVector(Room, 0.f, WallZ), FRotator::ZeroRotator,
@@ -230,6 +234,15 @@ namespace
 
 AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World, bool bOldSchoolGym)
 {
+	const FName ShellTag = bOldSchoolGym ? FName(TEXT("FB_P1GymShell")) : FName(TEXT("FB_P1BowlShell"));
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(ShellTag))
+		{
+			return *It;
+		}
+	}
+
 	ClearOldRingProps(World);
 
 	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -263,7 +276,7 @@ AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World, bool bOldSchoolGym)
 	if (Floor)
 	{
 		Floor->Tags.Add(FloorTag);
-		// Paint top-ish look: second thinner canvas pad on top.
+		Floor->Tags.Add(ShellTag);
 	}
 
 	SpawnMeshActor(
@@ -382,6 +395,15 @@ AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World, bool bOldSchoolGym)
 
 void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World, bool bOldSchoolGym)
 {
+	const FName ReadyTag = bOldSchoolGym ? FName(TEXT("FB_P1LightsReadyGym")) : FName(TEXT("FB_P1LightsReadyBowl"));
+	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(ReadyTag))
+		{
+			return;
+		}
+	}
+
 	DestroyByTag(World, GymLightTag);
 
 	const FLinearColor KeyColor = bOldSchoolGym ? FLinearColor(1.f, 0.82f, 0.62f) : FLinearColor(1.f, 0.96f, 0.90f);
@@ -626,7 +648,8 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World, bool bOldSchoolGym)
 			FVector(-420.f, 420.f, 470.f),
 			FVector(420.f, 420.f, 470.f),
 			FVector(-420.f, -280.f, 470.f),
-			FVector(420.f, -280.f, 470.f)
+			FVector(420.f, -280.f, 470.f),
+			FVector(0.f, 1650.f, 320.f)
 		};
 		for (const FVector& Loc : BulbLocs)
 		{
@@ -648,6 +671,13 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World, bool bOldSchoolGym)
 				Comp->SetLightColor(FLinearColor(1.f, 0.62f, 0.32f));
 			}
 		}
+	}
+
+	if (KeyActor)
+	{
+		KeyActor->Tags.Remove(FName(TEXT("FB_P1LightsReadyGym")));
+		KeyActor->Tags.Remove(FName(TEXT("FB_P1LightsReadyBowl")));
+		KeyActor->Tags.Add(ReadyTag);
 	}
 
 	const int32 KeyMobility = KeyComp ? (int32)KeyComp->Mobility : -1;
@@ -791,34 +821,45 @@ void UFBP1ArenaBootstrap::EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlay
 
 	SpawnFloor(World, bOldSchoolGym);
 	SpawnLighting(World, bOldSchoolGym);
-	SpawnRing(World);
+	AFBRingBounds* Ring = SpawnRing(World);
+
+	auto PlaceCorner = [Ring](AFBBoxerCharacter* Boxer, EFBCornerSkin Skin)
+	{
+		if (!Boxer)
+		{
+			return;
+		}
+		Boxer->ApplyBasicSkin(Skin);
+		const UCapsuleComponent* Capsule = Boxer->GetCapsuleComponent();
+		const float Radius = Capsule ? Capsule->GetScaledCapsuleRadius() : 37.f;
+		FVector Location = FVector::ZeroVector;
+		FRotator Facing = FRotator::ZeroRotator;
+		if (!Ring || !Ring->GetCornerAnchor(Skin, Radius, Location, Facing))
+		{
+			return;
+		}
+		Location.Z = CanvasTopZ + 6.f + Boxer->GetStandingHalfHeight();
+		Boxer->SetActorLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+		Boxer->SetActorRotation(Facing);
+	};
 
 	OutPlayer = FindFirstPlayerBoxer(World);
-	const float FighterZ = CanvasTopZ + 6.f + (OutPlayer ? OutPlayer->GetStandingHalfHeight() : 112.f);
-	if (OutPlayer)
-	{
-		OutPlayer->SetActorLocation(FVector(-OpeningHalfGap, 0.f, FighterZ));
-		OutPlayer->SetActorRotation(FRotator(0.f, 0.f, 0.f));
-		OutPlayer->ApplyBasicSkin(EFBCornerSkin::BlueCorner);
-	}
+	PlaceCorner(OutPlayer, EFBCornerSkin::BlueCorner);
 
 	if (bSpawnOpponentIfMissing)
 	{
-		OutOpponent = SpawnOpponent(World, FVector(OpeningHalfGap, 0.f, FighterZ));
-		if (OutOpponent)
+		FVector RedLocation(215.f, -215.f, CanvasTopZ + 120.f);
+		FRotator RedFacing = FRotator(0.f, -135.f, 0.f);
+		const float Radius = (OutPlayer && OutPlayer->GetCapsuleComponent())
+			? OutPlayer->GetCapsuleComponent()->GetScaledCapsuleRadius()
+			: 37.f;
+		if (Ring)
 		{
-			OutOpponent->ApplyBasicSkin(EFBCornerSkin::RedCorner);
+			Ring->GetCornerAnchor(EFBCornerSkin::RedCorner, Radius, RedLocation, RedFacing);
+			RedLocation.Z = CanvasTopZ + 6.f + (OutPlayer ? OutPlayer->GetStandingHalfHeight() : 112.f);
 		}
-	}
-
-	if (OutPlayer && OutOpponent)
-	{
-		const FVector ToOpp = (OutOpponent->GetActorLocation() - OutPlayer->GetActorLocation()).GetSafeNormal2D();
-		if (!ToOpp.IsNearlyZero())
-		{
-			OutPlayer->SetActorRotation(ToOpp.Rotation());
-			OutOpponent->SetActorRotation((-ToOpp).Rotation());
-		}
+		OutOpponent = SpawnOpponent(World, RedLocation);
+		PlaceCorner(OutOpponent, EFBCornerSkin::RedCorner);
 	}
 
 	if (bSpawnOpponentIfMissing)
@@ -866,10 +907,42 @@ namespace BagRoom
 {
 	const FName ShellTag(TEXT("FB_BagRoom"));
 	const FName LightTag(TEXT("FB_BagRoomLight"));
-	/** North of the old-school gym wall at Y=1400. The bout ring stays at the origin. */
-	constexpr float OriginY = 2800.f;
-	constexpr float HangZ = 252.f;
-	constexpr float RowSpacing = 340.f;
+
+	// The gym floor and the wood hall both top out at Z=-90. This room uses that plane.
+	// The hall runs Y=1400 to 1900 and is 280 cm wide. The gym north-wall gap matches it.
+	constexpr float FloorTopZ = -90.f;
+	constexpr float FloorThickness = 16.f;
+	constexpr float SouthInnerY = 1900.f;
+	constexpr float InteriorDepth = 780.f;
+	constexpr float NorthInnerY = SouthInnerY + InteriorDepth;
+	constexpr float InnerHalfX = 560.f;
+	constexpr float WallThickness = 40.f;
+	constexpr float CeilingClear = 320.f;
+	constexpr float DoorHalfWidth = 140.f;
+
+	// Leather center sits this far south of the north inner face, so a swing misses the brick.
+	constexpr float BagInset = 155.f;
+	constexpr float BagY = NorthInnerY - BagInset;
+	// 86 cm of air under the 132 cm bag, then the 34 cm chain, up from the walk surface.
+	constexpr float HangZ = FloorTopZ + 86.f + 132.f + 34.f;
+	constexpr float RowSpacing = 200.f;
+	constexpr float StandOff = 175.f;
+
+	constexpr float CameraSide = 300.f;
+	constexpr float CameraBack = 290.f;
+	constexpr float CameraHeight = 150.f;
+	constexpr float CameraLook = 115.f;
+
+	constexpr float CeilingBottomZ = FloorTopZ + CeilingClear;
+	constexpr float WallBottomZ = FloorTopZ - 8.f;
+	constexpr float WallHeight = CeilingBottomZ - WallBottomZ;
+	constexpr float WallCenterZ = (WallBottomZ + CeilingBottomZ) * 0.5f;
+	constexpr float WallHalf = WallThickness * 0.5f;
+
+	FVector ScaleCm(float SizeXcm, float SizeYcm, float SizeZcm)
+	{
+		return FVector(SizeXcm / 100.f, SizeYcm / 100.f, SizeZcm / 100.f);
+	}
 
 	AStaticMeshActor* Piece(
 		UWorld* World,
@@ -930,6 +1003,24 @@ void UFBP1ArenaBootstrap::DestroyBagRoom(UWorld* World)
 	}
 }
 
+FFBBagRoomLayout UFBP1ArenaBootstrap::GetBagRoomLayout()
+{
+	FFBBagRoomLayout Layout;
+	Layout.FloorTopZ = BagRoom::FloorTopZ;
+	Layout.SouthInnerY = BagRoom::SouthInnerY;
+	Layout.NorthInnerY = BagRoom::NorthInnerY;
+	Layout.InnerHalfX = BagRoom::InnerHalfX;
+	Layout.BagY = BagRoom::BagY;
+	Layout.HangZ = BagRoom::HangZ;
+	Layout.RowSpacing = BagRoom::RowSpacing;
+	Layout.StandOff = BagRoom::StandOff;
+	Layout.CameraSide = BagRoom::CameraSide;
+	Layout.CameraBack = BagRoom::CameraBack;
+	Layout.CameraHeight = BagRoom::CameraHeight;
+	Layout.CameraLook = BagRoom::CameraLook;
+	return Layout;
+}
+
 void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBag)
 {
 	OutActiveBag = nullptr;
@@ -963,7 +1054,13 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 		}
 	}
 
-	const FVector Center(0.f, BagRoom::OriginY, 0.f);
+	const float OuterX = BagRoom::InnerHalfX + BagRoom::WallThickness;
+	const float SouthOuterY = BagRoom::SouthInnerY - BagRoom::WallThickness;
+	const float NorthOuterY = BagRoom::NorthInnerY + BagRoom::WallThickness;
+	const float FloorCenterZ = BagRoom::FloorTopZ - BagRoom::FloorThickness * 0.5f;
+	const float CeilingCenterZ = BagRoom::CeilingBottomZ + 6.f;
+	const FVector RoomCenter(0.f, (BagRoom::SouthInnerY + BagRoom::NorthInnerY) * 0.5f, 0.f);
+
 	if (!bHasShell)
 	{
 		UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -976,34 +1073,120 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 			const FLinearColor Ceiling(0.14f, 0.12f, 0.10f);
 			const FLinearColor Glass(0.62f, 0.72f, 0.68f);
 
-			// 24 m by 18 m. The active bag is the center. Two meters of clear floor fit around it.
-			BagRoom::Piece(World, Cube, Center + FVector(0.f, 0.f, -12.f), FVector(24.f, 18.f, 0.24f), Wood, true);
-			for (int32 Board = -3; Board <= 3; ++Board)
+			// Floor top matches the gym and the hall. Walls sit on it. The ceiling sits on the walls.
+			const float FloorSizeX = OuterX * 2.f;
+			const float FloorSizeY = NorthOuterY - SouthOuterY;
+			BagRoom::Piece(
+				World, Cube,
+				FVector(0.f, (SouthOuterY + NorthOuterY) * 0.5f, FloorCenterZ),
+				BagRoom::ScaleCm(FloorSizeX, FloorSizeY, BagRoom::FloorThickness),
+				Wood, true);
+			for (int32 Board = 0; Board < 5; ++Board)
 			{
-				BagRoom::Piece(World, Cube, Center + FVector(0.f, Board * 220.f, -1.f), FVector(23.2f, 0.05f, 0.02f), WoodDark, false);
+				const float BoardY = BagRoom::SouthInnerY + 80.f + Board * 140.f;
+				BagRoom::Piece(
+					World, Cube,
+					FVector(0.f, BoardY, BagRoom::FloorTopZ + 1.f),
+					BagRoom::ScaleCm((BagRoom::InnerHalfX - 40.f) * 2.f, 6.f, 2.f),
+					WoodDark, false);
 			}
 
-			const float WallZ = 160.f;
-			BagRoom::Piece(World, Cube, Center + FVector(0.f, 900.f, WallZ), FVector(24.6f, 0.42f, 3.3f), Brick, true);
-			BagRoom::Piece(World, Cube, Center + FVector(0.f, -900.f, WallZ), FVector(24.6f, 0.42f, 3.3f), BrickDark, true);
-			BagRoom::Piece(World, Cube, Center + FVector(1200.f, 0.f, WallZ), FVector(0.42f, 18.4f, 3.3f), Brick, true);
-			BagRoom::Piece(World, Cube, Center + FVector(-1200.f, 0.f, WallZ), FVector(0.42f, 18.4f, 3.3f), BrickDark, true);
-			BagRoom::Piece(World, Cube, Center + FVector(0.f, 0.f, 330.f), FVector(24.6f, 18.4f, 0.12f), Ceiling, false);
+			const FVector WallScaleNS = BagRoom::ScaleCm(FloorSizeX, BagRoom::WallThickness, BagRoom::WallHeight);
+			const FVector WallScaleEW = BagRoom::ScaleCm(BagRoom::WallThickness, FloorSizeY, BagRoom::WallHeight);
+			BagRoom::Piece(World, Cube, FVector(0.f, NorthOuterY - BagRoom::WallHalf, BagRoom::WallCenterZ), WallScaleNS, Brick, true);
 
-			// Beam the bags hang from. Its underside is the hang height.
-			BagRoom::Piece(World, Cube, Center + FVector(0.f, 0.f, BagRoom::HangZ + 9.f), FVector(20.f, 0.22f, 0.18f), WoodDark, false);
-			BagRoom::Piece(World, Cube, Center + FVector(0.f, 878.f, 250.f), FVector(6.f, 0.06f, 0.9f), Glass, false);
-			BagRoom::Piece(World, Cube, Center + FVector(1178.f, -200.f, 230.f), FVector(0.06f, 3.2f, 0.8f), Glass, false);
+			const float DoorGap = BagRoom::DoorHalfWidth * 2.f;
+			const float SouthSegment = (FloorSizeX - DoorGap) * 0.5f;
+			const float SouthCenterX = BagRoom::DoorHalfWidth + SouthSegment * 0.5f;
+			const FVector SouthScale = BagRoom::ScaleCm(SouthSegment, BagRoom::WallThickness, BagRoom::WallHeight);
+			const float SouthCenterY = BagRoom::SouthInnerY - BagRoom::WallHalf;
+			BagRoom::Piece(World, Cube, FVector(-SouthCenterX, SouthCenterY, BagRoom::WallCenterZ), SouthScale, BrickDark, true);
+			BagRoom::Piece(World, Cube, FVector(SouthCenterX, SouthCenterY, BagRoom::WallCenterZ), SouthScale, BrickDark, true);
+			BagRoom::Piece(World, Cube, FVector(OuterX - BagRoom::WallHalf, RoomCenter.Y, BagRoom::WallCenterZ), WallScaleEW, Brick, true);
+			BagRoom::Piece(World, Cube, FVector(-(OuterX - BagRoom::WallHalf), RoomCenter.Y, BagRoom::WallCenterZ), WallScaleEW, BrickDark, true);
+
+			BagRoom::Piece(
+				World, Cube,
+				FVector(0.f, RoomCenter.Y, CeilingCenterZ),
+				BagRoom::ScaleCm(FloorSizeX, FloorSizeY, 12.f),
+				Ceiling, false);
+
+			// Beam spans into both side walls. Its underside is the hang point.
+			const float BeamHeight = 22.f;
+			BagRoom::Piece(
+				World, Cube,
+				FVector(0.f, BagRoom::BagY, BagRoom::HangZ + BeamHeight * 0.5f),
+				BagRoom::ScaleCm(FloorSizeX, 28.f, BeamHeight),
+				WoodDark, false);
+
+			// Short enclosed hall from the gym's north opening to this doorway. Training only.
+			const float HallSouthY = 1410.f;
+			const float HallNorthY = SouthOuterY + 20.f;
+			const float HallCenterY = (HallSouthY + HallNorthY) * 0.5f;
+			const float HallLength = HallNorthY - HallSouthY;
+			const float HallOuterX = BagRoom::DoorHalfWidth + BagRoom::WallThickness;
+			BagRoom::Piece(
+				World, Cube,
+				FVector(-BagRoom::DoorHalfWidth - BagRoom::WallHalf, HallCenterY, BagRoom::WallCenterZ),
+				BagRoom::ScaleCm(BagRoom::WallThickness, HallLength, BagRoom::WallHeight),
+				BrickDark, true);
+			BagRoom::Piece(
+				World, Cube,
+				FVector(BagRoom::DoorHalfWidth + BagRoom::WallHalf, HallCenterY, BagRoom::WallCenterZ),
+				BagRoom::ScaleCm(BagRoom::WallThickness, HallLength, BagRoom::WallHeight),
+				Brick, true);
+			BagRoom::Piece(
+				World, Cube,
+				FVector(-(BagRoom::DoorHalfWidth + BagRoom::WallHalf), 1650.f, FloorCenterZ),
+				BagRoom::ScaleCm(BagRoom::WallThickness, 500.f, BagRoom::FloorThickness),
+				Wood, true);
+			BagRoom::Piece(
+				World, Cube,
+				FVector(BagRoom::DoorHalfWidth + BagRoom::WallHalf, 1650.f, FloorCenterZ),
+				BagRoom::ScaleCm(BagRoom::WallThickness, 500.f, BagRoom::FloorThickness),
+				Wood, true);
+			BagRoom::Piece(
+				World, Cube,
+				FVector(0.f, HallCenterY, CeilingCenterZ),
+				BagRoom::ScaleCm(HallOuterX * 2.f, HallLength, 12.f),
+				Ceiling, false);
+
+			BagRoom::Piece(
+				World, Cube,
+				FVector(0.f, NorthOuterY - BagRoom::WallHalf, BagRoom::FloorTopZ + 160.f),
+				BagRoom::ScaleCm(320.f, 8.f, 90.f),
+				Glass, false);
+			BagRoom::Piece(
+				World, Cube,
+				FVector(OuterX - BagRoom::WallHalf, BagRoom::SouthInnerY + 280.f, BagRoom::FloorTopZ + 160.f),
+				BagRoom::ScaleCm(8.f, 160.f, 80.f),
+				Glass, false);
 		}
 	}
 
 	if (!bHasRoomLight)
 	{
+		auto ForceMovable = [](AActor* Actor, USceneComponent* Comp)
+		{
+			if (Actor)
+			{
+				if (USceneComponent* Root = Actor->GetRootComponent())
+				{
+					Root->SetMobility(EComponentMobility::Movable);
+				}
+			}
+			if (Comp)
+			{
+				Comp->SetMobility(EComponentMobility::Movable);
+			}
+		};
+
+		const float BulbZ = BagRoom::CeilingBottomZ - 22.f;
 		const FVector Bulbs[] = {
-			Center + FVector(-420.f, 0.f, 290.f),
-			Center + FVector(420.f, 0.f, 290.f),
-			Center + FVector(0.f, -280.f, 300.f),
-			Center + FVector(0.f, 280.f, 300.f)
+			FVector(-BagRoom::RowSpacing * 1.5f, BagRoom::BagY - 70.f, BulbZ),
+			FVector(0.f, BagRoom::BagY - 70.f, BulbZ),
+			FVector(BagRoom::RowSpacing * 1.5f, BagRoom::BagY - 70.f, BulbZ),
+			FVector(0.f, 1650.f, BagRoom::FloorTopZ + 250.f)
 		};
 		for (const FVector& Loc : Bulbs)
 		{
@@ -1016,20 +1199,17 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 			Bulb->Tags.Add(BagRoom::LightTag);
 			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(Bulb->GetLightComponent()))
 			{
-				if (USceneComponent* Root = Bulb->GetRootComponent())
-				{
-					Root->SetMobility(EComponentMobility::Movable);
-				}
-				Comp->SetMobility(EComponentMobility::Movable);
-				Comp->SetIntensity(6500.f);
-				Comp->SetAttenuationRadius(1100.f);
+				ForceMovable(Bulb, Comp);
+				Comp->SetIntensity(7500.f);
+				Comp->SetAttenuationRadius(700.f);
 				Comp->SetCastShadows(false);
-				Comp->SetLightColor(FLinearColor(1.f, 0.72f, 0.48f));
+				Comp->SetLightColor(FLinearColor(1.f, 0.74f, 0.50f));
 			}
 		}
 
-		const FVector SpotLoc = Center + FVector(180.f, -420.f, 310.f);
-		const FRotator Aim = (Center + FVector(0.f, 0.f, 140.f) - SpotLoc).Rotation();
+		const FVector Focus(0.f, BagRoom::BagY - BagRoom::StandOff * 0.5f, BagRoom::FloorTopZ + BagRoom::CameraLook);
+		const FVector SpotLoc(-340.f, BagRoom::SouthInnerY + 180.f, BagRoom::FloorTopZ + 210.f);
+		const FRotator Aim = (Focus - SpotLoc).Rotation();
 		FActorSpawnParameters SpotParams;
 		ASpotLight* Spot = World->SpawnActor<ASpotLight>(SpotLoc, Aim, SpotParams);
 		if (Spot)
@@ -1037,17 +1217,31 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 			Spot->Tags.Add(BagRoom::LightTag);
 			if (USpotLightComponent* Comp = Cast<USpotLightComponent>(Spot->GetLightComponent()))
 			{
-				if (USceneComponent* Root = Spot->GetRootComponent())
-				{
-					Root->SetMobility(EComponentMobility::Movable);
-				}
-				Comp->SetMobility(EComponentMobility::Movable);
-				Comp->SetIntensity(9000.f);
-				Comp->SetAttenuationRadius(1400.f);
-				Comp->SetInnerConeAngle(22.f);
-				Comp->SetOuterConeAngle(48.f);
+				ForceMovable(Spot, Comp);
+				Comp->SetIntensity(14000.f);
+				Comp->SetAttenuationRadius(1100.f);
+				Comp->SetInnerConeAngle(18.f);
+				Comp->SetOuterConeAngle(46.f);
 				Comp->SetCastShadows(false);
-				Comp->SetLightColor(FLinearColor(1.f, 0.84f, 0.68f));
+				Comp->SetLightColor(FLinearColor(1.f, 0.84f, 0.66f));
+			}
+		}
+
+		const FVector FillLoc(280.f, BagRoom::SouthInnerY + 240.f, BagRoom::FloorTopZ + 200.f);
+		const FRotator FillAim = (FVector(0.f, BagRoom::BagY, BagRoom::FloorTopZ + 150.f) - FillLoc).Rotation();
+		ASpotLight* Fill = World->SpawnActor<ASpotLight>(FillLoc, FillAim, SpotParams);
+		if (Fill)
+		{
+			Fill->Tags.Add(BagRoom::LightTag);
+			if (USpotLightComponent* Comp = Cast<USpotLightComponent>(Fill->GetLightComponent()))
+			{
+				ForceMovable(Fill, Comp);
+				Comp->SetIntensity(7000.f);
+				Comp->SetAttenuationRadius(1000.f);
+				Comp->SetInnerConeAngle(22.f);
+				Comp->SetOuterConeAngle(58.f);
+				Comp->SetCastShadows(false);
+				Comp->SetLightColor(FLinearColor(1.f, 0.70f, 0.48f));
 			}
 		}
 	}
@@ -1061,7 +1255,7 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 	for (float SlotX : Slots)
 	{
 		const bool bActive = FMath::IsNearlyZero(SlotX);
-		const FVector Hang(SlotX, BagRoom::OriginY, BagRoom::HangZ);
+		const FVector Hang(SlotX, BagRoom::BagY, BagRoom::HangZ);
 		const FTransform Xform(FRotator::ZeroRotator, Hang);
 		AFBHeavyBag* Bag = World->SpawnActorDeferred<AFBHeavyBag>(
 			AFBHeavyBag::StaticClass(),
@@ -1081,8 +1275,9 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("FinalBell bag room Y=%.0f hangZ=%.0f spacing=%.0f active=%s"),
-		BagRoom::OriginY,
+	UE_LOG(LogTemp, Warning, TEXT("FinalBell bag room floorZ=%.0f bagY=%.0f hangZ=%.0f spacing=%.0f active=%s"),
+		BagRoom::FloorTopZ,
+		BagRoom::BagY,
 		BagRoom::HangZ,
 		BagRoom::RowSpacing,
 		OutActiveBag ? *OutActiveBag->GetName() : TEXT("none"));

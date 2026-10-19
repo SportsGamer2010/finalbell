@@ -3,7 +3,12 @@
 #include "UI/FBMenuWidget.h"
 #include "UI/FBPlayerSettings.h"
 #include "InputKeyEventArgs.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
+#include "Framework/Application/SlateApplication.h"
+#include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
+#include "Widgets/SViewport.h"
 
 AFBMenuPlayerController::AFBMenuPlayerController()
 {
@@ -42,12 +47,39 @@ void AFBMenuPlayerController::BeginPlay()
 	if (MenuWidget)
 	{
 		MenuWidget->AddToViewport(20);
-		FInputModeUIOnly Mode;
+		FInputModeGameAndUI Mode;
 		Mode.SetWidgetToFocus(MenuWidget->TakeWidget());
 		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		Mode.SetHideCursorDuringCapture(false);
 		SetInputMode(Mode);
 		MenuWidget->ArmInitialFocus();
+		FocusMenuUser();
 	}
+}
+
+void AFBMenuPlayerController::FocusMenuUser()
+{
+	if (!MenuWidget || !IsLocalController() || !FSlateApplication::IsInitialized())
+	{
+		return;
+	}
+	int32 UserIndex = 0;
+	const ULocalPlayer* LP = GetLocalPlayer();
+	if (LP)
+	{
+		const int32 Mapped = IPlatformInputDeviceMapper::Get().GetUserIndexForPlatformUser(LP->GetPlatformUserId());
+		if (Mapped >= 0)
+		{
+			UserIndex = Mapped;
+		}
+	}
+	const TSharedPtr<SWidget> Focused = FSlateApplication::Get().GetUserFocusedWidget(UserIndex);
+	const TSharedPtr<SViewport> ViewportWidget = LP && LP->ViewportClient ? LP->ViewportClient->GetGameViewportWidget() : nullptr;
+	if (Focused.IsValid() && Focused != ViewportWidget)
+	{
+		return;
+	}
+	FSlateApplication::Get().SetUserFocus(UserIndex, MenuWidget->TakeWidget(), EFocusCause::SetDirectly);
 }
 
 void AFBMenuPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -74,8 +106,12 @@ void AFBMenuPlayerController::Tick(float DeltaSeconds)
 	{
 		return;
 	}
+	FocusMenuUser();
 	const float Y = GetInputAnalogKeyState(EKeys::Gamepad_LeftY);
-	if (FMath::Abs(Y) < 0.55f)
+	const float X = GetInputAnalogKeyState(EKeys::Gamepad_LeftX);
+	const bool bVertical = FMath::Abs(Y) >= FMath::Abs(X);
+	const float Axis = bVertical ? Y : X;
+	if (FMath::Abs(Axis) < 0.35f)
 	{
 		StickRepeat = 0.f;
 		return;
@@ -86,7 +122,14 @@ void AFBMenuPlayerController::Tick(float DeltaSeconds)
 		return;
 	}
 	StickRepeat = 0.28f;
-	MenuWidget->Navigate(Y > 0.f ? -1 : 1);
+	if (bVertical)
+	{
+		MenuWidget->Navigate(Y > 0.f ? -1 : 1);
+	}
+	else
+	{
+		MenuWidget->Horizontal(X > 0.f ? 1 : -1);
+	}
 }
 
 bool AFBMenuPlayerController::InputKey(const FInputKeyEventArgs& Params)

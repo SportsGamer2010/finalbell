@@ -415,8 +415,14 @@ void SFBBoutOverlay::Refresh(float DeltaSeconds, const AFBSparringGameState* Sta
 	}
 	if (DeductionText.IsValid())
 	{
-		DeductionText->SetText(FText::FromString(Card.DeductionNote));
-		DeductionText->SetVisibility(Card.DeductionNote.IsEmpty() ? EVisibility::Collapsed : EVisibility::HitTestInvisible);
+		FString Note = Card.DeductionNote;
+		if (!Note.IsEmpty())
+		{
+			Note += TEXT("\n");
+		}
+		Note += TEXT("OPTIONS — REMATCH OR MAIN MENU");
+		DeductionText->SetText(FText::FromString(Note));
+		DeductionText->SetVisibility(EVisibility::HitTestInvisible);
 	}
 
 	FString Pillars;

@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Combat/FBCombatTypes.h"
 #include "FBRingBounds.generated.h"
 
 class UBoxComponent;
@@ -20,6 +21,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Ring")
 	FVector ClampToRing(const FVector& WorldLocation) const;
+
+	/**
+	 * Stable corner inside the playable box, diagonally opposite, facing the ring center.
+	 * The capsule radius keeps the body off the ropes. Z is the volume center; the caller sets the feet.
+	 */
+	bool GetCornerAnchor(EFBCornerSkin Corner, float CapsuleRadius, FVector& OutLocation, FRotator& OutFacing) const;
 
 protected:
 	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Ring")

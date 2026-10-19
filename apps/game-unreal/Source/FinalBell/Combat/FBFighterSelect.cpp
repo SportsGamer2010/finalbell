@@ -555,9 +555,7 @@ void AFBSparringPlayerController::ShowFighterSelect()
 	}
 	bFighterSelectVisible = true;
 	bShowMouseCursor = true;
-	FInputModeGameAndUI InputMode;
-	InputMode.SetHideCursorDuringCapture(false);
-	SetInputMode(InputMode);
+	SuspendFightMapping();
 	RebuildFighterSelect();
 }
 
@@ -572,7 +570,10 @@ void AFBSparringPlayerController::HideFighterSelect()
 	SelectActions.Reset();
 	bFighterSelectVisible = false;
 	bShowMouseCursor = false;
-	SetInputMode(FInputModeGameOnly());
+	if (!IsMenuTakingInput())
+	{
+		RestoreFightMapping();
+	}
 }
 
 void AFBSparringPlayerController::SaveCurrentDraft()

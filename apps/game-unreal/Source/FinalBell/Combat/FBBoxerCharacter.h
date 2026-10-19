@@ -10,6 +10,9 @@
 #include "Combat/FBFighterBalance.h"
 #include "FBBoxerCharacter.generated.h"
 
+class ULocalPlayer;
+class USphereComponent;
+
 class UFBCombatComponent;
 class UPoseableMeshComponent;
 class UStaticMeshComponent;
@@ -32,8 +35,13 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void UnPossessed() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PawnClientRestart() override;
 	virtual void OnRep_PlayerState() override;
+
+	/** Adds or removes the fight mapping on the owning local player. A menu passes false. */
+	void SetFightMappingActive(bool bActive);
 
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Combat")
 	UFBCombatComponent* GetCombatComponent() const { return CombatComponent; }
@@ -151,6 +159,10 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerSubmitCombatIntent(const FFBCombatIntent& Intent);
 
+	/** Development feedback. Shipping builds ignore it. */
+	UFUNCTION(Client, Unreliable)
+	void ClientReportIntent(EFBIntentResult Result, EFBAttackId Attack);
+
 	/** Bone roll only. The capsule stays. StickX is -1 for the fighter's left. */
 	UFUNCTION(Server, Reliable)
 	void ServerApplyShoulderRoll(float StickX);
@@ -191,6 +203,19 @@ public:
 	/** Glove sphere for this attack. The heavy bag uses the same center. The radius is unchanged. */
 	FVector GetPunchVolumeCenter(EFBAttackId Attack) const;
 	float GetPunchVolumeRadius(EFBAttackId Attack) const;
+
+	/** 0 is the hand at the start of the active window. 1 is the existing punch-sphere center. */
+	FVector GetGlovePoint(EFBAttackId Attack, float Alpha) const;
+
+	/**
+	 * Sweeps the glove sphere from From to To against query volumes on Target.
+	 * The movement capsule is not a hit. A high guard does not block a body shot.
+	 * bOutBlocked is true when a guard volume was in the way and bGuardCounts is true.
+	 */
+	bool SweepGlove(AActor* Target, const FVector& From, const FVector& To, float Radius, bool bBodyShot, bool bGuardCounts, bool& bOutBlocked) const;
+
+	/** Server only. Clears damage, the canvas, and the gas tank without changing the capsule. */
+	void AuthorityPrepareForRematch();
 
 	/**
 	 * Why: slip, roll, and lean are bone poses. They must not move the capsule or the punch spheres.
@@ -296,6 +321,16 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Combat")
 	TObjectPtr<UFBCombatComponent> CombatComponent;
+
+	/** Query only. Not the movement capsule, and not scaled by bruises or swelling. */
+	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Combat")
+	TObjectPtr<USphereComponent> HeadVolume;
+
+	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Combat")
+	TObjectPtr<USphereComponent> TorsoVolume;
+
+	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Combat")
+	TObjectPtr<USphereComponent> GuardVolume;
 
 	/** Skinned body. Bone rotations are written each frame for the guard and the six punches. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FinalBell|Skin")
@@ -661,6 +696,9 @@ protected:
 	void OnRightThumbReleased();
 
 	void SubmitLocalIntent(EFBAttackId Attack, bool bGuardHeld, EFBGuardState Guard);
+	void ReportIntentResult(EFBIntentResult Result, EFBAttackId Attack) const;
+	void UpdateQueryVolumes();
+	void DrawContactDebug(const FVector& From, const FVector& To, float Radius) const;
 	void SubmitRingAction(EFBRingAction Action);
 	void TryPrecisionPunch(bool bFromButton);
 	void TryStickPunch();
@@ -715,6 +753,9 @@ protected:
 	UFUNCTION()
 	void OnRep_AngleBonus();
 	void ApplyMappingContext();
+	void ClearMappingContext();
+	bool ControllerWantsFightMapping() const;
+	TWeakObjectPtr<ULocalPlayer> FightMappingPlayer;
 	void TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color);
 	void TintSkeletalMesh(const FLinearColor& Tint);
 	void SetupMannequinVisuals();

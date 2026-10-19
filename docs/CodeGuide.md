@@ -220,12 +220,12 @@ Used so two PIE windows can each have their own gamepad.
 
 ## Camera — `Camera/FBBroadcastCamera.h`
 
-Ringside camera just above the ropes. It looks slightly down at both fighters so their feet and most of the ring stay in frame, and it eases around the apron to keep a profile view.
+Ringside camera just above the ropes. It looks slightly down at both fighters so their feet and most of the ring stay in frame, and it eases around the apron to keep a profile view. With two live boxers it backs up when they separate and comes in when they close. That dolly is presentation only.
 
 | Function | What it does |
 | --- | --- |
 | `AFBBroadcastCamera` | Creates the camera and the mild contrast grade. |
-| `Tick` | Dollies along the apron and eases to a profile of both fighters when look input is idle. |
+| `Tick` | Dollies along the apron and eases to a profile of both fighters when look input is idle. The separation zoom eases with that move. A knockdown returns before the zoom is applied. |
 | `BeginPlay` | Finds the two fighters and possesses the view. |
 | `SetFighters` | Remembers who is the local fighter and who is the opponent. The first time, snaps to the south side of the ring. |
 | `ForcePossessedView` | Makes the owning controller look through this camera. |
@@ -234,15 +234,17 @@ Ringside camera just above the ropes. It looks slightly down at both fighters so
 | `GetOrbitYaw` | Current side of the ring. |
 | `GetOrbitFlatRotation` | That yaw with no pitch. |
 | `AutoFindFighters` | Uses the local pawn and the other boxer if `SetFighters` has not run. |
-| `ComputeFrame` | Places the camera outside the ropes and aims at the fighters' hips. |
+| `ComputeFrame` | Places the camera outside the ropes and aims at the fighters' hips. Two live boxers scale that ringside offset. One fighter, or the heavy bag, does not. |
 | `SnapToFrame` | Jumps there immediately so the first frame is the wide ringside shot. |
+
+The zoom reads the center-to-center gap of the two live boxers. **110 cm** is the clinch (the close dolly). **760 cm** is the far end, the diagonal of the ±270 cm playable box. On a flat side at 16:9 and 62°, the close dolly is about **5.1 m** from ring center and the far dolly is the existing wide offset, about **8.9 m**. The lens stays at least 120 cm outside the 305 cm rope line and inside ±1300 cm so it does not enter the ring or sit in the gym wall. The gap eases at interp speed 2.8 (about 0.35 s), then the camera eases to that spot. Fight FOV stays **62°**. It may tighten to **58°** when the ropes block a closer dolly, or open to **68°** when a wall blocks a wider one. The referee cut stays **42°** and does not take this zoom. Heavy-bag training still frames the fighter and the active bag.
 
 ## Ring — `Ring/FBP1ArenaBootstrap.h` and `Ring/FBRingBounds.h`
 
 | Function | What it does |
 | --- | --- |
 | `EnsureArena` | Builds the canvas, ropes, lights, and bounds if they are missing. Spawns the opponent only when asked. The last argument dresses the room as an old-school gym for 1v1 AI. |
-| `EnsureBagRoom` | Heavy bag training only. A bag row north of that gym: floor, walls, beam, movable lights, one punching bag, and visual neighbors. Does not move the bout ring. |
+| `EnsureBagRoom` | Heavy bag training only. A bag row on the north wall, on the same walk surface as the gym (Z=-90). Floor, walls, ceiling, a beam into the side walls, a short hall, and movable lights. One punching bag and visual neighbors. Does not move the bout ring. |
 | `DestroyBagRoom` | Removes that shell and its lights when training ends. |
 | `SpawnFloor` | Canvas, apron, posts, and four ropes. Around that, either the dark bowl or the gym. |
 | `SpawnOldSchoolGym` | Wood floor, brick walls, ceiling, beams, windows, bags, bench, bucket, mirror, and posters. Basic shapes. Outside the ropes. |
@@ -266,7 +268,7 @@ Ringside camera just above the ropes. It looks slightly down at both fighters so
 | `OverlapsPunch` | True when the existing punch sphere overlaps the leather. |
 | `GetStrikeCenter` | The bag mesh's current location. |
 
-Open the drill from the front-end **Heavy Bag Training** row, or from the sparring mode menu of the same name, or with console `FBMode 3`. That is `EFBPlayMode::Training`. It does not start the 3:00 clock or knockdowns. The fighter stands in the bag room north of the bout gym, not inside the 20 ft ring.
+Open the drill from the front-end **Heavy Bag Training** row, or from the sparring mode menu of the same name, or with console `FBMode 3`. That is `EFBPlayMode::Training`. It does not start the 3:00 clock or knockdowns. The fighter stands on the bag-room floor, 175 cm south of the center bag, facing it. The bout ring stays at the origin.
 
 ## Fight meters — `UI/FBFightMeters.h`
 

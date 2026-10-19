@@ -45,6 +45,49 @@ ULocalPlayer* UFBGameViewportClient::SetupInitialLocalPlayer(FString& OutError)
 	return LocalPlayer;
 }
 
+void UFBGameViewportClient::ClaimPadsForLocalPlayer()
+{
+	if (CountPieViewports() >= 2)
+	{
+		return;
+	}
+	ULocalPlayer* LocalPlayer = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr;
+	if (!LocalPlayer)
+	{
+		return;
+	}
+	const FPlatformUserId Want = LocalPlayer->GetPlatformUserId();
+	if (!Want.IsValid())
+	{
+		return;
+	}
+
+	IPlatformInputDeviceMapper& Mapper = IPlatformInputDeviceMapper::Get();
+	const FInputDeviceId Keyboard = Mapper.GetDefaultInputDevice();
+	TArray<FInputDeviceId> Devices;
+	Mapper.GetAllConnectedInputDevices(Devices);
+	for (const FInputDeviceId& Device : Devices)
+	{
+		if (!Device.IsValid() || Device == Keyboard)
+		{
+			continue;
+		}
+		const FPlatformUserId Owner = Mapper.GetUserForInputDevice(Device);
+		if (Owner == Want)
+		{
+			continue;
+		}
+		if (Owner.IsValid())
+		{
+			Mapper.Internal_ChangeInputDeviceUserMapping(Device, Want, Owner);
+		}
+		else
+		{
+			Mapper.Internal_MapInputDeviceToUser(Device, Want, EInputDeviceConnectionState::Connected);
+		}
+	}
+}
+
 void UFBGameViewportClient::BindPieLocalPlayerToGamepad()
 {
 #if WITH_EDITOR
@@ -59,64 +102,26 @@ void UFBGameViewportClient::BindPieLocalPlayerToGamepad()
 		return;
 	}
 
-	if (ULocalPlayer* LocalPlayer = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr)
+	// Solo PIE stays on the front-end local player. Only a second window takes the next id.
+	if (Ctx->PIEInstance > 0)
 	{
-		LocalPlayer->SetControllerId(Ctx->PIEInstance);
-		bPieBindingApplied = true;
-		UE_LOG(LogTemp, Warning,
-			TEXT("FinalBell: PIE instance %d bound to controller/user %d"),
-			Ctx->PIEInstance, Ctx->PIEInstance);
+		if (ULocalPlayer* LocalPlayer = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr)
+		{
+			LocalPlayer->SetControllerId(Ctx->PIEInstance);
+			bPieBindingApplied = true;
+			UE_LOG(LogTemp, Warning,
+				TEXT("FinalBell: PIE instance %d bound to controller/user %d"),
+				Ctx->PIEInstance, Ctx->PIEInstance);
+		}
 	}
-
-	PieFocusRetrySeconds = 2.f;
-	FocusRetryAccum = 0.f;
-	EnsurePieGamepadFocus();
 #endif
-}
-
-void UFBGameViewportClient::EnsurePieGamepadFocus()
-{
-#if WITH_EDITOR
-	if (!GEngine || !FSlateApplication::IsInitialized())
-	{
-		return;
-	}
-
-	const FWorldContext* Ctx = GEngine->GetWorldContextFromGameViewport(this);
-	if (!Ctx || Ctx->WorldType != EWorldType::PIE || Ctx->PIEInstance < 0)
-	{
-		return;
-	}
-
-	const TSharedPtr<SViewport> Widget = GetGameViewportWidget();
-	if (!Widget.IsValid())
-	{
-		return;
-	}
-
-	FSlateApplication::Get().SetUserFocus(
-		static_cast<uint32>(Ctx->PIEInstance),
-		Widget,
-		EFocusCause::SetDirectly);
-#endif
+	ClaimPadsForLocalPlayer();
 }
 
 void UFBGameViewportClient::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-#if WITH_EDITOR
-	if (PieFocusRetrySeconds > 0.f)
-	{
-		PieFocusRetrySeconds -= DeltaTime;
-		FocusRetryAccum += DeltaTime;
-		if (FocusRetryAccum >= 0.25f || PieFocusRetrySeconds <= 0.f)
-		{
-			FocusRetryAccum = 0.f;
-			EnsurePieGamepadFocus();
-		}
-	}
-#endif
+	ClaimPadsForLocalPlayer();
 }
 
 void UFBGameViewportClient::RemapControllerInput(FInputKeyEventArgs& InOutEventArgs)
@@ -131,18 +136,13 @@ void UFBGameViewportClient::RemapControllerInput(FInputKeyEventArgs& InOutEventA
 				const int32 PieCount = CountPieViewports();
 				const int32 PadUser = ResolvePadUser(InOutEventArgs);
 
-				// Solo PIE: any pad drives the one local player (so pad 2 isn't dead).
+				// Solo PIE: keep this pad's device id, and give it to the one local player.
 				if (PieCount <= 1)
 				{
 					if (ULocalPlayer* LP = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr)
 					{
+						ClaimPadsForLocalPlayer();
 						InOutEventArgs.ControllerId = LP->GetControllerId();
-						const FInputDeviceId Primary =
-							IPlatformInputDeviceMapper::Get().GetPrimaryInputDeviceForUser(LP->GetPlatformUserId());
-						if (Primary.IsValid())
-						{
-							InOutEventArgs.InputDevice = Primary;
-						}
 					}
 					return;
 				}

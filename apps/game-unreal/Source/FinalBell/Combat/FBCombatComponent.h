@@ -25,7 +25,7 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Combat")
-	bool ServerTryProcessIntent(const FFBCombatIntent& Intent, AActor* Opponent);
+	EFBIntentResult ServerTryProcessIntent(const FFBCombatIntent& Intent, AActor* Opponent);
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
 	float GetBurstEnergy() const { return BurstEnergy; }
@@ -114,6 +114,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float RecoverySeconds = 0.22f;
 
+	/** One queued punch is accepted only in this tail of recovery, then it expires. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
+	float ComboBufferSeconds = 0.125f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float EnergyRecoverPerSecond = 12.f;
 
@@ -178,6 +182,21 @@ protected:
 	bool bResolvedThisAttack = false;
 	int32 NextAttackInstanceId = 1;
 	TSet<int32> ResolvedAttackInstanceIds;
+	/** Defenders already damaged by this attack. One hit per attacker, attack, and defender. */
+	TSet<int32> DamagedDefendersThisAttack;
+
+	bool bDesiredGuardPending = false;
+	bool bDesiredGuardHeld = false;
+	EFBGuardState DesiredGuard = EFBGuardState::Open;
+	bool bDesiredBody = false;
+	bool bDesiredPower = false;
+
+	bool bHasBufferedAttack = false;
+	FFBCombatIntent BufferedIntent;
+	TWeakObjectPtr<AActor> BufferedOpponent;
+
+	FVector GloveSample = FVector::ZeroVector;
+	bool bHasGloveSample = false;
 
 	UFUNCTION()
 	void OnRep_CombatVisual();
@@ -191,6 +210,10 @@ protected:
 	float DamageFor(EFBAttackId Attack) const;
 	void SetPhase(EFBAttackPhase NewPhase, float Duration);
 	void BeginAttack(EFBAttackId Attack, AActor* Opponent, bool bBodyShot, bool bPowerShot);
+	void RememberDesiredDefense(const FFBCombatIntent& Intent);
+	void ApplyDesiredDefense();
+	void ClearBufferedAttack();
+	bool BoutAllowsNewAttack() const;
 	/**
 	 * Why: the glove is live for the whole active window, not one frame at the start.
 	 * What: resolves a hit, a block, or a slip. A whiff waits until bCommitMiss, which is the end of the window.
@@ -211,5 +234,8 @@ public:
 	 */
 	void RestoreBurstEnergy(float Amount);
 	void RestoreBetweenRound();
+
+	/** Clears the punch, the buffer, fatigue, and the gas tank for another bell. */
+	void ResetForRematch();
 };
 

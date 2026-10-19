@@ -75,9 +75,9 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			if (AttackPhase == EFBAttackPhase::Startup)
 			{
 				ActiveWindowStartTime = ServerClock();
+				bHasGloveSample = false;
 				SetPhase(EFBAttackPhase::Active, ActiveWindowSeconds * ActiveTimeScale);
 				bResolvedThisAttack = false;
-				ResolveAgainstOpponent(PendingOpponent.Get(), false);
 			}
 			else if (AttackPhase == EFBAttackPhase::Active)
 			{
@@ -99,6 +99,18 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				bActivePowerShot = false;
 				SetPhase(EFBAttackPhase::Idle, 0.f);
 				PendingOpponent = nullptr;
+				ApplyDesiredDefense();
+				if (bHasBufferedAttack)
+				{
+					const FFBCombatIntent Queued = BufferedIntent;
+					AActor* QueuedOpponent = BufferedOpponent.Get();
+					ClearBufferedAttack();
+					if (BoutAllowsNewAttack() && CanAfford(Queued.Attack))
+					{
+						bActivePrecisionCone = Queued.bPrecisionCone;
+						BeginAttack(Queued.Attack, QueuedOpponent, Queued.bBodyTarget, Queued.bPowerPunch);
+					}
+				}
 			}
 		}
 	}
@@ -172,6 +184,8 @@ void UFBCombatComponent::BeginAttack(EFBAttackId Attack, AActor* Opponent, bool 
 	PendingOpponent = Opponent;
 	DefenderLocationAtStart = Opponent ? Opponent->GetActorLocation() : FVector::ZeroVector;
 	bResolvedThisAttack = false;
+	DamagedDefendersThisAttack.Reset();
+	bHasGloveSample = false;
 	BurstEnergy = FMath::Max(0.f, BurstEnergy - CostFor(Attack));
 	PunchRegenDelay = FFBFighterBalance::RegenDelaySeconds;
 	ActiveTimeScale = 1.f;
@@ -218,7 +232,10 @@ void UFBCombatComponent::AbortAttack()
 	bActivePowerShot = false;
 	bResolvedThisAttack = true;
 	PendingOpponent = nullptr;
+	bHasGloveSample = false;
+	ClearBufferedAttack();
 	SetPhase(EFBAttackPhase::Idle, 0.f);
+	ApplyDesiredDefense();
 }
 
 void UFBCombatComponent::RestoreBurstEnergy(float Amount)
@@ -246,6 +263,76 @@ void UFBCombatComponent::RestoreBetweenRound()
 	const float Deficit = FMath::Max(0.f, Ceiling - BurstEnergy);
 	const float Back = Deficit * FMath::Min(1.f, 0.55f * Recovery);
 	RestoreBurstEnergy(BurstEnergy + Back);
+}
+
+void UFBCombatComponent::ResetForRematch()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+	AbortAttack();
+	Fatigue = 0.f;
+	bDesiredGuardPending = false;
+	bDesiredBody = false;
+	bDesiredPower = false;
+	GuardState = EFBGuardState::Open;
+	GuardStateSince = -1.f;
+	RestoreBurstEnergy(MaxBurstEnergy);
+}
+
+void UFBCombatComponent::RememberDesiredDefense(const FFBCombatIntent& Intent)
+{
+	bDesiredBody = Intent.bBodyTarget;
+	bDesiredPower = Intent.bPowerPunch;
+	// A punch intent must not drop a guard the player is still holding.
+	// The release arrives as its own intent with no attack.
+	if (Intent.Attack != EFBAttackId::None && !Intent.bGuardHeld)
+	{
+		return;
+	}
+	bDesiredGuardPending = true;
+	bDesiredGuardHeld = Intent.bGuardHeld;
+	DesiredGuard = Intent.bGuardHeld ? Intent.Guard : EFBGuardState::Open;
+}
+
+void UFBCombatComponent::ApplyDesiredDefense()
+{
+	if (!bDesiredGuardPending || AttackPhase != EFBAttackPhase::Idle)
+	{
+		return;
+	}
+	bDesiredGuardPending = false;
+	const EFBGuardState NewGuard = bDesiredGuardHeld ? DesiredGuard : EFBGuardState::Open;
+	if (NewGuard == GuardState)
+	{
+		return;
+	}
+	GuardState = NewGuard;
+	GuardStateSince = ServerClock();
+	OnRep_CombatVisual();
+}
+
+void UFBCombatComponent::ClearBufferedAttack()
+{
+	bHasBufferedAttack = false;
+	BufferedIntent = FFBCombatIntent();
+	BufferedOpponent = nullptr;
+}
+
+bool UFBCombatComponent::BoutAllowsNewAttack() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return true;
+	}
+	const AFBSparringGameMode* Mode = World->GetAuthGameMode<AFBSparringGameMode>();
+	if (!Mode)
+	{
+		return true;
+	}
+	return Mode->AllowsNewAttacks();
 }
 
 bool UFBCombatComponent::DidDefenderRollUnder(const AActor* Attacker, const AFBBoxerCharacter* Defender) const
@@ -294,58 +381,54 @@ bool UFBCombatComponent::IsHeldDefenseOnTime(float ActiveWindowStart) const
 	return GuardStateSince <= ActiveWindowStart;
 }
 
-bool UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent& Intent, AActor* Opponent)
+EFBIntentResult UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent& Intent, AActor* Opponent)
 {
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || !OwnerActor->HasAuthority())
 	{
-		return false;
+		return EFBIntentResult::RejectedNoAuthority;
 	}
 
 	if (AFBBoxerCharacter* Self = Cast<AFBBoxerCharacter>(OwnerActor))
 	{
 		if (Self->IsKnockedDown())
 		{
-			return false;
+			return EFBIntentResult::RejectedDown;
 		}
 	}
 	if (const AFBBoxerCharacter* Defender = Cast<AFBBoxerCharacter>(Opponent))
 	{
-		if (Defender->IsKnockedDown())
+		if (Defender->IsKnockedDown() && Intent.Attack != EFBAttackId::None)
 		{
-			return false;
+			return EFBIntentResult::RejectedDown;
 		}
 	}
 
 	if (Intent.Sequence <= LastProcessedSequence)
 	{
-		return false;
+		return EFBIntentResult::RejectedSequence;
 	}
 
 	if (Intent.SchemaVersion != TEXT("1.0.0"))
 	{
-		return false;
+		return EFBIntentResult::RejectedSchema;
 	}
 
 	LastProcessedSequence = Intent.Sequence;
-
-	// Cannot raise/lower guard mid-committed punch.
-	// The timestamp stays put while the same guard is held, so a late re-send is not a new defense.
+	RememberDesiredDefense(Intent);
 	if (AttackPhase == EFBAttackPhase::Idle)
 	{
-		const EFBGuardState NewGuard = Intent.bGuardHeld ? Intent.Guard : EFBGuardState::Open;
-		if (NewGuard != GuardState)
-		{
-			GuardState = NewGuard;
-			GuardStateSince = ServerClock();
-			OnRep_CombatVisual();
-		}
+		ApplyDesiredDefense();
 	}
 
 	if (Intent.Attack == EFBAttackId::None)
 	{
 		if (Intent.RingAction != EFBRingAction::None)
 		{
+			if (!BoutAllowsNewAttack())
+			{
+				return EFBIntentResult::RejectedBreak;
+			}
 			if (AFBBoxerCharacter* Self = Cast<AFBBoxerCharacter>(OwnerActor))
 			{
 				if (UWorld* World = GetWorld())
@@ -357,22 +440,50 @@ bool UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent& Intent, A
 				}
 			}
 		}
-		return true;
+		if (bHasBufferedAttack)
+		{
+			BufferedIntent.bBodyTarget = bDesiredBody;
+			BufferedIntent.bPowerPunch = bDesiredPower;
+		}
+		return EFBIntentResult::Accepted;
+	}
+
+	if (!BoutAllowsNewAttack())
+	{
+		return EFBIntentResult::RejectedBreak;
+	}
+
+	if (AttackPhase == EFBAttackPhase::Recovery
+		&& PhaseTimeRemaining > 0.f
+		&& PhaseTimeRemaining <= ComboBufferSeconds)
+	{
+		if (bHasBufferedAttack)
+		{
+			return EFBIntentResult::RejectedPhase;
+		}
+		if (!CanAfford(Intent.Attack))
+		{
+			return EFBIntentResult::RejectedEnergy;
+		}
+		BufferedIntent = Intent;
+		BufferedOpponent = Opponent;
+		bHasBufferedAttack = true;
+		return EFBIntentResult::Buffered;
 	}
 
 	if (AttackPhase != EFBAttackPhase::Idle)
 	{
-		return false;
+		return EFBIntentResult::RejectedPhase;
 	}
 
 	if (!CanAfford(Intent.Attack))
 	{
-		return false;
+		return EFBIntentResult::RejectedEnergy;
 	}
 
 	bActivePrecisionCone = Intent.bPrecisionCone;
 	BeginAttack(Intent.Attack, Opponent, Intent.bBodyTarget, Intent.bPowerPunch);
-	return true;
+	return EFBIntentResult::Accepted;
 }
 
 void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMiss)
@@ -417,13 +528,23 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 
 	if (AFBHeavyBag* Bag = Cast<AFBHeavyBag>(Opponent))
 	{
+		const float Duration = FMath::Max(0.01f, ActiveWindowSeconds * ActiveTimeScale);
+		const float Alpha = FMath::Clamp(1.f - (PhaseTimeRemaining / Duration), 0.f, 1.f);
 		const FVector PunchCenter = AttackingBoxer
-			? AttackingBoxer->GetPunchVolumeCenter(ActiveAttack)
+			? AttackingBoxer->GetGlovePoint(ActiveAttack, Alpha)
 			: OwnerActor->GetActorLocation();
+		const FVector PunchFrom = bHasGloveSample
+			? GloveSample
+			: (AttackingBoxer ? AttackingBoxer->GetGlovePoint(ActiveAttack, FMath::Max(0.f, Alpha - 0.05f)) : PunchCenter);
+		GloveSample = PunchCenter;
+		bHasGloveSample = true;
 		const float PunchRadius = AttackingBoxer
 			? AttackingBoxer->GetPunchVolumeRadius(ActiveAttack)
 			: 40.f;
-		if (!Bag->OverlapsPunch(PunchCenter, PunchRadius))
+		const FVector PunchMid = (PunchFrom + PunchCenter) * 0.5f;
+		if (!Bag->OverlapsPunch(PunchCenter, PunchRadius)
+			&& !Bag->OverlapsPunch(PunchFrom, PunchRadius)
+			&& !Bag->OverlapsPunch(PunchMid, PunchRadius))
 		{
 			if (!bCommitMiss)
 			{
@@ -475,7 +596,28 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 	}
 
 	AFBBoxerCharacter* AttackerBoxer = Cast<AFBBoxerCharacter>(OwnerActor);
-	const bool bCollisionHit = AttackerBoxer && AttackerBoxer->DoesPunchConnect(ActiveAttack, Defender);
+	bool bBlockedByGuard = false;
+	bool bCollisionHit = false;
+	if (AttackerBoxer)
+	{
+		const float Duration = FMath::Max(0.01f, ActiveWindowSeconds * ActiveTimeScale);
+		const float Alpha = FMath::Clamp(1.f - (PhaseTimeRemaining / Duration), 0.f, 1.f);
+		const FVector To = AttackerBoxer->GetGlovePoint(ActiveAttack, Alpha);
+		const FVector From = bHasGloveSample
+			? GloveSample
+			: AttackerBoxer->GetGlovePoint(ActiveAttack, FMath::Max(0.f, Alpha - 0.05f));
+		GloveSample = To;
+		bHasGloveSample = true;
+		const bool bGuardCounts = DefenderCombat && DefenderCombat->IsHeldDefenseOnTime(ActiveWindowStartTime);
+		bCollisionHit = AttackerBoxer->SweepGlove(
+			Defender,
+			From,
+			To,
+			AttackerBoxer->GetPunchVolumeRadius(ActiveAttack),
+			bActiveBodyShot,
+			bGuardCounts,
+			bBlockedByGuard);
+	}
 
 	// Weave ducks a hook only when the weave was already held before this glove window.
 	// A weave pressed after the window opened is late and does not slip the hook.
@@ -524,15 +666,10 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 		return;
 	}
 
-	const EFBGuardState DefenderGuard = DefenderCombat ? DefenderCombat->GetGuardState() : EFBGuardState::Open;
-	const bool bHeadBlock = DefenderGuard == EFBGuardState::High && !bActiveBodyShot;
-	const bool bBodyBlock = DefenderGuard == EFBGuardState::Low && bActiveBodyShot;
-	const bool bGuardUp = bHeadBlock || bBodyBlock;
-	const bool bGuardOnTime = DefenderCombat && DefenderCombat->IsHeldDefenseOnTime(ActiveWindowStartTime);
-	const bool bBlocked = bGuardUp && bGuardOnTime && Defender->GetBlockHealth() > 0.5f;
-	if (bGuardUp && !bGuardOnTime)
+	const bool bBlocked = bBlockedByGuard && Defender->GetBlockHealth() > 0.5f;
+	if (bBlockedByGuard && Defender->GetBlockHealth() <= 0.5f)
 	{
-		UE_LOG(LogTemp, Log, TEXT("FinalBell late guard does not block attack=%d"), (int32)ActiveAttack);
+		bCollisionHit = true;
 	}
 	const float AngleMul = AttackerBoxer ? AttackerBoxer->GetAnglePowerMultiplier() : 1.f;
 	Impact.bAngleBonus = AngleMul > 1.01f;
@@ -582,6 +719,12 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 		ResolvedAttackInstanceIds.Add(Impact.AttackInstanceId);
 	}
 	bResolvedThisAttack = true;
+	const int32 DefenderId = static_cast<int32>(Defender->GetUniqueID());
+	if (DamagedDefendersThisAttack.Contains(DefenderId))
+	{
+		return;
+	}
+	DamagedDefendersThisAttack.Add(DefenderId);
 	Defender->ApplyAuthoritativeDamage(Impact.DamageApplied, Impact.AttackInstanceId, Impact.Region, Impact.Result == EFBContactResult::CleanHit);
 	if (UWorld* World = GetWorld())
 	{

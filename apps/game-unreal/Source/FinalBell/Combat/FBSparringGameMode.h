@@ -73,6 +73,15 @@ public:
 	/** Drops knockdown, clinch, clock, and the card without writing a result. */
 	void AbandonBoutForMenu();
 
+	/** Same two fighters, same corners, a new 3:00 bell. Does not rebuild the gym. */
+	void RequestRematch();
+
+	/** Blue and red corners from the ring volume. Used for the first bell, a rematch, and the return after the round. */
+	void SendFightersToCorners();
+
+	/** False during a knockdown, a rest, after the result, and while the bell is waiting on a glove. */
+	bool AllowsNewAttacks() const;
+
 	/** Host only. Freezes the bout clock and the count. A remote client cannot set this. */
 	void SetPresentationPaused(bool bPaused);
 
@@ -193,6 +202,7 @@ protected:
 	void SetRefereeCall(const FString& Call, float Seconds = 2.4f);
 	bool AreClinching() const { return ClinchA.IsValid() && ClinchB.IsValid(); }
 	void PlaceFightersForMatch();
+	bool AnyGloveInFlight() const;
 	void ApplyPendingBuilds();
 	void RestoreBetweenRounds();
 	void AwardCareerFromCard();

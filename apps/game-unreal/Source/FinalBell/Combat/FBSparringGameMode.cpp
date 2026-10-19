@@ -22,6 +22,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
@@ -72,7 +73,7 @@ void AFBSparringGameMode::BeginPlay()
 void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
-	if (bAutoBuildP1Arena)
+	if (bAutoBuildP1Arena && !bArenaBuilt)
 	{
 		GetWorldTimerManager().SetTimer(ArenaBuildTimer, this, &AFBSparringGameMode::TryBuildArenaAndStart, 0.35f, false);
 	}
@@ -138,6 +139,108 @@ void AFBSparringGameMode::AbandonBoutForMenu()
 	ActivePlayMode = EFBPlayMode::Unset;
 	bArenaBuilt = false;
 	PushBoutState();
+}
+
+void AFBSparringGameMode::RequestRematch()
+{
+	if (!HasAuthority() || ActivePlayMode == EFBPlayMode::Unset || ActivePlayMode == EFBPlayMode::Training)
+	{
+		return;
+	}
+	if (!bResultFinalized && Phase != EFBBoutPhase::Complete)
+	{
+		return;
+	}
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	{
+		if (*It)
+		{
+			It->AuthorityPrepareForRematch();
+		}
+	}
+	ResetBoutState();
+	SendFightersToCorners();
+	StartBout();
+}
+
+void AFBSparringGameMode::SendFightersToCorners()
+{
+	if (ActivePlayMode == EFBPlayMode::Training)
+	{
+		return;
+	}
+	AFBRingBounds* Ring = nullptr;
+	for (TActorIterator<AFBRingBounds> It(GetWorld()); It; ++It)
+	{
+		Ring = *It;
+		break;
+	}
+	if (!Ring)
+	{
+		return;
+	}
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	{
+		AFBBoxerCharacter* Boxer = *It;
+		if (!Boxer)
+		{
+			continue;
+		}
+		const UCapsuleComponent* Capsule = Boxer->GetCapsuleComponent();
+		const float Radius = Capsule ? Capsule->GetScaledCapsuleRadius() : 34.f;
+		FVector Location = FVector::ZeroVector;
+		FRotator Facing = FRotator::ZeroRotator;
+		if (!Ring->GetCornerAnchor(Boxer->CornerSkin, Radius, Location, Facing))
+		{
+			continue;
+		}
+		Location.Z = Boxer->GetStandingHalfHeight() + 6.f;
+		Boxer->SetActorLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+		Boxer->SetActorRotation(Facing);
+		if (UCharacterMovementComponent* Move = Boxer->GetCharacterMovement())
+		{
+			Move->StopMovementImmediately();
+		}
+	}
+}
+
+bool AFBSparringGameMode::AllowsNewAttacks() const
+{
+	if (ActivePlayMode == EFBPlayMode::Training)
+	{
+		return !bResultFinalized;
+	}
+	if (bKnockdownActive || bResultFinalized)
+	{
+		return false;
+	}
+	if (Phase == EFBBoutPhase::BetweenRounds || Phase == EFBBoutPhase::Complete)
+	{
+		return false;
+	}
+	if (Phase == EFBBoutPhase::RoundActive && PhaseTimeRemaining <= 0.f)
+	{
+		return false;
+	}
+	return true;
+}
+
+bool AFBSparringGameMode::AnyGloveInFlight() const
+{
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	{
+		const UFBCombatComponent* Combat = It->GetCombatComponent();
+		if (!Combat)
+		{
+			continue;
+		}
+		const EFBAttackPhase AttackPhase = Combat->GetAttackPhase();
+		if (AttackPhase == EFBAttackPhase::Startup || AttackPhase == EFBAttackPhase::Active)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void AFBSparringGameMode::SetPresentationPaused(bool bPaused)
@@ -424,10 +527,14 @@ void AFBSparringGameMode::PlaceFightersForMatch()
 		}
 		if (Humans.Num() >= 1)
 		{
-			const FVector BagCenter = Bag ? Bag->GetStrikeCenter() : FVector(0.f, 2800.f, 150.f);
-			const float StandZ = Humans[0]->GetStandingHalfHeight() + 4.f;
-			Humans[0]->SetActorLocation(FVector(BagCenter.X, BagCenter.Y - 115.f, StandZ));
+			const FFBBagRoomLayout Room = UFBP1ArenaBootstrap::GetBagRoomLayout();
+			const FVector BagCenter = Bag ? Bag->GetStrikeCenter() : FVector(0.f, Room.BagY, Room.FloorTopZ + 150.f);
+			const float Half = Humans[0]->GetStandingHalfHeight();
+			const FVector Stand(BagCenter.X, BagCenter.Y - Room.StandOff, Room.FloorTopZ + Half);
+			Humans[0]->SetActorLocation(Stand, false, nullptr, ETeleportType::TeleportPhysics);
 			Humans[0]->SetActorRotation(FRotator(0.f, 90.f, 0.f));
+			UE_LOG(LogTemp, Warning, TEXT("FinalBell training stand (%.0f, %.0f, %.0f) feetZ=%.0f off bag by %.0f"),
+				Stand.X, Stand.Y, Stand.Z, Room.FloorTopZ, Room.StandOff);
 			Humans[0]->ApplyBasicSkin(EFBCornerSkin::BlueCorner);
 		}
 	}
@@ -497,20 +604,22 @@ void AFBSparringGameMode::PlaceFightersForMatch()
 				Humans.Add(*It);
 			}
 		}
-		if (Humans.Num() >= 1)
+			if (Humans.Num() >= 1)
 		{
-			Humans[0]->SetActorLocation(FVector(-95.f, 0.f, Humans[0]->GetStandingHalfHeight() + 6.f));
 			Humans[0]->ApplyBasicSkin(EFBCornerSkin::BlueCorner);
 		}
 		if (Humans.Num() >= 2)
 		{
-			Humans[1]->SetActorLocation(FVector(95.f, 0.f, Humans[1]->GetStandingHalfHeight() + 6.f));
 			Humans[1]->ApplyBasicSkin(EFBCornerSkin::RedCorner);
 		}
 	}
 
 	// One opponent in solo sparring. None beside a second human or the heavy bag.
 	EnforceRoster();
+	if (!bWantBag)
+	{
+		SendFightersToCorners();
+	}
 
 	ApplyPendingBuilds();
 	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
@@ -633,6 +742,10 @@ void AFBSparringGameMode::TryBuildArenaAndStart()
 	{
 		return;
 	}
+	if (bArenaBuilt)
+	{
+		return;
+	}
 
 	PlaceFightersForMatch();
 
@@ -660,6 +773,7 @@ void AFBSparringGameMode::StartBout()
 		return;
 	}
 	CurrentRound = 1;
+	SendFightersToCorners();
 	Phase = EFBBoutPhase::RoundActive;
 	PhaseTimeRemaining = RoundDurationSeconds;
 	bResultFinalized = false;
@@ -759,7 +873,10 @@ void AFBSparringGameMode::Tick(float DeltaSeconds)
 		if (PhaseTimeRemaining <= 0.f)
 		{
 			PhaseTimeRemaining = 0.f;
-			AdvancePhase();
+			if (!AnyGloveInFlight())
+			{
+				AdvancePhase();
+			}
 		}
 	}
 
@@ -772,6 +889,7 @@ void AFBSparringGameMode::AdvancePhase()
 	{
 		if (CurrentRound >= TotalRounds)
 		{
+			SendFightersToCorners();
 			Phase = EFBBoutPhase::Complete;
 			FinalizeResultOnce();
 			return;
@@ -779,6 +897,7 @@ void AFBSparringGameMode::AdvancePhase()
 		Phase = EFBBoutPhase::BetweenRounds;
 		PhaseTimeRemaining = RestDurationSeconds;
 		RestoreBetweenRounds();
+		SendFightersToCorners();
 		return;
 	}
 
@@ -787,6 +906,7 @@ void AFBSparringGameMode::AdvancePhase()
 		++CurrentRound;
 		Phase = EFBBoutPhase::RoundActive;
 		PhaseTimeRemaining = RoundDurationSeconds;
+		SendFightersToCorners();
 	}
 }
 

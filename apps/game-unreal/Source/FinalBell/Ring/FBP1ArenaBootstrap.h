@@ -12,6 +12,23 @@ class AFBHeavyBag;
 class AFBRingBounds;
 class UWorld;
 
+/** Bag-room numbers shared by the shell, the training stand, and the camera. Centimeters. */
+struct FFBBagRoomLayout
+{
+	float FloorTopZ = -90.f;
+	float SouthInnerY = 1900.f;
+	float NorthInnerY = 2680.f;
+	float InnerHalfX = 560.f;
+	float BagY = 2525.f;
+	float HangZ = 162.f;
+	float RowSpacing = 200.f;
+	float StandOff = 175.f;
+	float CameraSide = 300.f;
+	float CameraBack = 290.f;
+	float CameraHeight = 150.f;
+	float CameraLook = 115.f;
+};
+
 UCLASS()
 class FINALBELL_API UFBP1ArenaBootstrap : public UObject
 {
@@ -37,10 +54,13 @@ public:
 
 	/**
 	 * Why: heavy bag training was standing inside the bout ring, so the bag read as part of the fight.
-	 * What: builds a bag row north of that gym. Floor, walls, a beam, and movable lights.
-	 * One bag takes punches. The others are visual. Does not move ring bounds or rebuild Ring_P1.
+	 * What: builds a bag row on the north wall of a room that shares the gym floor. One bag takes punches.
+	 * The others are visual. Does not move ring bounds or rebuild Ring_P1.
 	 */
 	static void EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBag);
+
+	/** Floor, bag row, stand-off, and camera distances for the training room. */
+	static FFBBagRoomLayout GetBagRoomLayout();
 
 	/** Removes the bag-room shell and its lights. Does not destroy the bout ring. */
 	static void DestroyBagRoom(UWorld* World);

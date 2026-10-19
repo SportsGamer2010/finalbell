@@ -77,6 +77,21 @@ enum class EFBAttackPhase : uint8
 	Recovery
 };
 
+/** What the server did with one intent. A rejected punch did not start. */
+UENUM(BlueprintType)
+enum class EFBIntentResult : uint8
+{
+	Accepted = 0,
+	Buffered,
+	RejectedDown,
+	RejectedSequence,
+	RejectedSchema,
+	RejectedPhase,
+	RejectedEnergy,
+	RejectedBreak,
+	RejectedNoAuthority
+};
+
 /**
  * Where a punch was aimed.
  * Head and body are separate pools on purpose: a shot to the chin rocks balance,

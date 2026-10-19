@@ -24,9 +24,7 @@ public:
 
 private:
 	bool RouteGamepadToMatchingPieViewport(const FInputKeyEventArgs& EventArgs, bool bAxis);
-	void EnsurePieGamepadFocus();
+	void ClaimPadsForLocalPlayer();
 
 	bool bPieBindingApplied = false;
-	float PieFocusRetrySeconds = 0.f;
-	float FocusRetryAccum = 0.f;
 };

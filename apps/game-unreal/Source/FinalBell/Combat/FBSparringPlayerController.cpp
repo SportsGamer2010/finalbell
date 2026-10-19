@@ -178,6 +178,7 @@ void AFBSparringPlayerController::PlayerTick(float DeltaTime)
 	UpdateFightMeters();
 	SubmitLocalGetUpAim();
 	UpdateBoutOverlay(DeltaTime);
+	SyncFightMappingToFocus();
 	if (bFighterSelectVisible && bBuilderOpen)
 	{
 		if (APawn* PreviewPawn = GetPawn())
@@ -269,7 +270,7 @@ void AFBSparringPlayerController::PresentSoloRing()
 		HideModeMenu();
 	}
 	bShowMouseCursor = false;
-	SetInputMode(FInputModeGameOnly());
+	RestoreFightMapping();
 	if (APawn* Spec = GetSpectatorPawn())
 	{
 		Spec->SetActorHiddenInGame(true);
@@ -708,7 +709,10 @@ void AFBSparringPlayerController::HideModeMenu()
 	ModeRows.Reset();
 	bModeMenuVisible = false;
 	bShowMouseCursor = false;
-	SetInputMode(FInputModeGameOnly());
+	if (!IsMenuTakingInput())
+	{
+		RestoreFightMapping();
+	}
 }
 
 void AFBSparringPlayerController::ChooseMode(EFBPlayMode Mode)
@@ -837,20 +841,116 @@ TSharedRef<SWidget> AFBSparringPlayerController::WrapForPad(TSharedRef<SWidget> 
 		];
 }
 
+bool AFBSparringPlayerController::IsMenuTakingInput() const
+{
+	return bPauseOpen || bModeMenuVisible || bFighterSelectVisible;
+}
+
+bool AFBSparringPlayerController::WantsFightMapping() const
+{
+	return bFightMappingWanted && !IsMenuTakingInput();
+}
+
+bool AFBSparringPlayerController::ViewportHasFocus() const
+{
+	const UGameViewportClient* Viewport = LocalViewport();
+	if (!Viewport || !Viewport->Viewport)
+	{
+		return true;
+	}
+	return Viewport->Viewport->IsForegroundWindow();
+}
+
+void AFBSparringPlayerController::SuspendFightMapping()
+{
+	bFightMappingWanted = false;
+	if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetPawn()))
+	{
+		Boxer->SetFightMappingActive(false);
+	}
+}
+
+void AFBSparringPlayerController::RestoreFightMapping()
+{
+	if (!IsLocalController() || IsMenuTakingInput())
+	{
+		return;
+	}
+	bFightMappingWanted = ViewportHasFocus();
+	bShowMouseCursor = false;
+	SetInputMode(FInputModeGameOnly());
+	if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetPawn()))
+	{
+		Boxer->SetFightMappingActive(bFightMappingWanted);
+	}
+}
+
+void AFBSparringPlayerController::RefocusOpenMenu()
+{
+	if (bPauseOpen && PauseWidget.IsValid())
+	{
+		FocusMenuWidget(PauseWidget);
+	}
+	else if (bFighterSelectVisible && FighterSelectWidget.IsValid())
+	{
+		FocusMenuWidget(FighterSelectWidget);
+	}
+	else if (bModeMenuVisible && ModeMenuWidget.IsValid())
+	{
+		FocusMenuWidget(ModeMenuWidget);
+	}
+}
+
+void AFBSparringPlayerController::SyncFightMappingToFocus()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+	const bool bFocused = ViewportHasFocus();
+	if (bFocused == bSawViewportFocus)
+	{
+		return;
+	}
+	bSawViewportFocus = bFocused;
+	if (!bFocused)
+	{
+		SuspendFightMapping();
+		return;
+	}
+	if (IsMenuTakingInput())
+	{
+		RefocusOpenMenu();
+		return;
+	}
+	RestoreFightMapping();
+}
+
 void AFBSparringPlayerController::FocusMenuWidget(const TSharedPtr<SWidget>& Widget)
 {
+	SuspendFightMapping();
 	if (!Widget.IsValid())
 	{
 		return;
 	}
-	FInputModeUIOnly InputMode;
+	FInputModeGameAndUI InputMode;
 	InputMode.SetWidgetToFocus(Widget);
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
 	SetInputMode(InputMode);
 	bShowMouseCursor = true;
 	if (FSlateApplication::IsInitialized())
 	{
-		FSlateApplication::Get().SetKeyboardFocus(Widget, EFocusCause::SetDirectly);
+		int32 UserIndex = 0;
+		if (const ULocalPlayer* LP = GetLocalPlayer())
+		{
+			const int32 Mapped = IPlatformInputDeviceMapper::Get().GetUserIndexForPlatformUser(LP->GetPlatformUserId());
+			if (Mapped >= 0)
+			{
+				UserIndex = Mapped;
+			}
+		}
+		FSlateApplication::Get().SetUserFocus(UserIndex, Widget.ToSharedRef(), EFocusCause::SetDirectly);
 	}
 }
 
@@ -887,7 +987,7 @@ void AFBSparringPlayerController::PollMenuStick(float DeltaTime)
 	const float StickY = GetInputAnalogKeyState(EKeys::Gamepad_LeftY);
 	const float StickX = GetInputAnalogKeyState(EKeys::Gamepad_LeftX);
 	const float Axis = FMath::Abs(StickY) >= FMath::Abs(StickX) ? StickY : -StickX;
-	if (FMath::Abs(Axis) < 0.55f)
+	if (FMath::Abs(Axis) < 0.35f)
 	{
 		MenuStickRepeat = 0.f;
 		return;
@@ -941,6 +1041,20 @@ void AFBSparringPlayerController::ActivateMenu()
 				bPauseConfirmQuit = false;
 				PauseFocus = 3;
 				ShowPauseMenu();
+			}
+			return;
+		}
+		if (bPauseForResult)
+		{
+			switch (PauseFocus)
+			{
+			case 0: RequestRematch(); break;
+			case 1: ReturnToMainMenu(); break;
+			default:
+				bPauseConfirmQuit = true;
+				PauseFocus = 0;
+				ShowPauseMenu();
+				break;
 			}
 			return;
 		}
@@ -1113,10 +1227,17 @@ void AFBSparringPlayerController::ShowPauseMenu()
 		return Style;
 	}();
 
-	const TCHAR* Labels[] = { TEXT("RESUME"), TEXT("MAIN MENU"), TEXT("CHANGE MODE"), TEXT("QUIT") };
+	bool bCardUp = false;
+	if (const AFBSparringGameState* BoutState = GetWorld() ? GetWorld()->GetGameState<AFBSparringGameState>() : nullptr)
+	{
+		bCardUp = BoutState->bCardVisible;
+	}
+	bPauseForResult = bCardUp && !bPauseConfirmQuit;
+	const TCHAR* FightLabels[] = { TEXT("RESUME"), TEXT("MAIN MENU"), TEXT("CHANGE MODE"), TEXT("QUIT") };
+	const TCHAR* ResultLabels[] = { TEXT("REMATCH"), TEXT("MAIN MENU"), TEXT("QUIT") };
 	const TCHAR* ConfirmLabels[] = { TEXT("QUIT"), TEXT("STAY") };
-	const TCHAR* const* Shown = bPauseConfirmQuit ? ConfirmLabels : Labels;
-	const int32 Count = bPauseConfirmQuit ? 2 : 4;
+	const TCHAR* const* Shown = bPauseConfirmQuit ? ConfirmLabels : (bPauseForResult ? ResultLabels : FightLabels);
+	const int32 Count = bPauseConfirmQuit ? 2 : (bPauseForResult ? 3 : 4);
 	PauseFocus = FMath::Clamp(PauseFocus, 0, Count - 1);
 	PauseRows.Reset();
 
@@ -1236,6 +1357,31 @@ void AFBSparringPlayerController::HidePauseMenu()
 	PauseRows.Reset();
 	bPauseOpen = false;
 	bPauseConfirmQuit = false;
+	bPauseForResult = false;
+}
+
+void AFBSparringPlayerController::RequestRematch()
+{
+	if (HasAuthority())
+	{
+		if (AFBSparringGameMode* Mode = GetWorld() ? GetWorld()->GetAuthGameMode<AFBSparringGameMode>() : nullptr)
+		{
+			Mode->RequestRematch();
+		}
+	}
+	else
+	{
+		ServerRequestRematch();
+	}
+	ResumeFromPause();
+}
+
+void AFBSparringPlayerController::ServerRequestRematch_Implementation()
+{
+	if (AFBSparringGameMode* Mode = GetWorld() ? GetWorld()->GetAuthGameMode<AFBSparringGameMode>() : nullptr)
+	{
+		Mode->RequestRematch();
+	}
 }
 
 void AFBSparringPlayerController::ResumeFromPause()
@@ -1252,7 +1398,7 @@ void AFBSparringPlayerController::ResumeFromPause()
 		UGameplayStatics::SetGamePaused(World, false);
 	}
 	bShowMouseCursor = false;
-	SetInputMode(FInputModeGameOnly());
+	RestoreFightMapping();
 }
 
 void AFBSparringPlayerController::ReturnToMainMenu()

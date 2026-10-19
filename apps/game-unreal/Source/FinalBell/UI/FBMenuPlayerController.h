@@ -28,5 +28,7 @@ private:
 	UPROPERTY()
 	TObjectPtr<AFBMenuCamera> MenuCamera;
 
+	void FocusMenuUser();
+
 	float StickRepeat = 0.f;
 };

@@ -51,6 +51,9 @@ public:
 	void PollMenuStick(float DeltaTime);
 	TSharedRef<SWidget> WrapForPad(TSharedRef<SWidget> Content);
 	void FocusMenuWidget(const TSharedPtr<SWidget>& Widget);
+	bool IsMenuTakingInput() const;
+	/** True when this local player should own the fight mapping. Menus and a lost window are false. */
+	bool WantsFightMapping() const;
 
 protected:
 	void ShowModeMenu();
@@ -62,12 +65,18 @@ protected:
 	void ShowPauseMenu();
 	void HidePauseMenu();
 	void ResumeFromPause();
+	void RequestRematch();
 	void ReturnToMainMenu();
 	void ChangeModeFromPause();
 	void ActivateMenu();
 	void NudgeMenu(int32 Delta);
 	void BackMenu(bool bFromOptions);
 	void PaintChrome(TArray<FFBRowChrome>& Rows, int32 Selected) const;
+	void SuspendFightMapping();
+	void RestoreFightMapping();
+	void RefocusOpenMenu();
+	bool ViewportHasFocus() const;
+	void SyncFightMappingToFocus();
 	TSharedRef<SWidget> MakeFocusRow(const FString& Label, TFunction<void()> Action);
 	void ActivateSelectRow();
 	void LoadSelectRoster();
@@ -114,6 +123,9 @@ protected:
 	UFUNCTION(Server, Reliable)
 	void ServerSubmitGetUpAim(FVector2D LeftStick, FVector2D RightStick);
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestRematch();
+
 	TSharedPtr<SWidget> ModeMenuWidget;
 	TSharedPtr<SWidget> FightMeters;
 	TSharedPtr<SWidget> BoutOverlay;
@@ -122,6 +134,7 @@ protected:
 	bool bFighterSelectVisible = false;
 	bool bPauseOpen = false;
 	bool bPauseConfirmQuit = false;
+	bool bPauseForResult = false;
 	bool bBoutStartPending = false;
 	/** 1v1 vs AI or career is on this window. Keeps the ringside camera as the view. */
 	bool bSoloPresentation = false;
@@ -146,6 +159,8 @@ protected:
 	int32 PauseFocus = 0;
 	int32 SelectFocus = 0;
 	float MenuStickRepeat = 0.f;
+	bool bFightMappingWanted = true;
+	bool bSawViewportFocus = true;
 	uint64 LastMenuFrame = 0;
 	bool bHandledMenuKeyThisFrame = false;
 	FString PauseStatus;

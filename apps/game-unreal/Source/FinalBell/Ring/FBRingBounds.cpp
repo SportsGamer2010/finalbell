@@ -33,3 +33,24 @@ FVector AFBRingBounds::ClampToRing(const FVector& WorldLocation) const
 		Local.Z);
 	return RingVolume->GetComponentTransform().TransformPosition(Clamped);
 }
+
+bool AFBRingBounds::GetCornerAnchor(EFBCornerSkin Corner, float CapsuleRadius, FVector& OutLocation, FRotator& OutFacing) const
+{
+	if (!RingVolume)
+	{
+		return false;
+	}
+
+	const FVector Ext = RingVolume->GetScaledBoxExtent();
+	const float Limit = FMath::Min(Ext.X, Ext.Y);
+	const float Inset = FMath::Clamp(CapsuleRadius + 24.f, 36.f, Limit * 0.45f);
+	const bool bRed = Corner == EFBCornerSkin::RedCorner;
+	const FVector Local(
+		bRed ? (Ext.X - Inset) : -(Ext.X - Inset),
+		bRed ? -(Ext.Y - Inset) : (Ext.Y - Inset),
+		0.f);
+	OutLocation = RingVolume->GetComponentTransform().TransformPosition(Local);
+	const FVector ToCenter = (GetActorLocation() - OutLocation).GetSafeNormal2D();
+	OutFacing = ToCenter.IsNearlyZero() ? FRotator::ZeroRotator : ToCenter.Rotation();
+	return true;
+}
