@@ -30,6 +30,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
 	float GetBurstEnergy() const { return BurstEnergy; }
 
+	/** The last resolved punch. The AI reads a miss. It does not write the result. */
+	const FFBImpactEvent& GetLastImpact() const { return LastImpact; }
+
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
 	float GetFatigue() const { return Fatigue; }
 
@@ -128,6 +131,13 @@ public:
 
 	bool DidDefenderRollUnder(const AActor* Attacker, const AFBBoxerCharacter* Defender) const;
 
+	/**
+	 * Why: a high guard or a weave is a hold. It has to be up before the glove window opens.
+	 * What: true when this guard state began at or before ActiveWindowStart. Open is never on time.
+	 * A guard released early is Open, so it fails. A hold that started long before still counts.
+	 */
+	bool IsHeldDefenseOnTime(float ActiveWindowStart) const;
+
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	float BurstEnergy = 100.f;
@@ -157,6 +167,14 @@ protected:
 	FFBImpactEvent LastImpact;
 
 	float PhaseTimeRemaining = 0.f;
+	float ActiveTimeScale = 1.f;
+	/** Server clock when the current guard state began. -1 until the first change. */
+	float GuardStateSince = -1.f;
+	/** Server clock when this punch's active window opened. */
+	float ActiveWindowStartTime = -1.f;
+	float PunchRegenDelay = 0.f;
+	bool bLastContactMissed = false;
+	bool bActivePrecisionCone = false;
 	bool bResolvedThisAttack = false;
 	int32 NextAttackInstanceId = 1;
 	TSet<int32> ResolvedAttackInstanceIds;
@@ -166,12 +184,32 @@ protected:
 
 	UFUNCTION()
 	void OnRep_LastImpact();
+	void AddMissFatigue(float Amount);
 
 	bool CanAfford(EFBAttackId Attack) const;
 	float CostFor(EFBAttackId Attack) const;
 	float DamageFor(EFBAttackId Attack) const;
 	void SetPhase(EFBAttackPhase NewPhase, float Duration);
 	void BeginAttack(EFBAttackId Attack, AActor* Opponent, bool bBodyShot, bool bPowerShot);
-	void ResolveAgainstOpponent(AActor* Opponent);
+	/**
+	 * Why: the glove is live for the whole active window, not one frame at the start.
+	 * What: resolves a hit, a block, or a slip. A whiff waits until bCommitMiss, which is the end of the window.
+	 */
+	void ResolveAgainstOpponent(AActor* Opponent, bool bCommitMiss);
+	float ServerClock() const;
+
+public:
+	/**
+	 * Why: a knockdown cancels the punch that emptied the tank, so it cannot land from the canvas.
+	 * What: returns the attack to idle on the server.
+	 */
+	void AbortAttack();
+
+	/**
+	 * Why: beating the count has to leave enough energy to stand and fight.
+	 * What: sets burst energy on the server, clamped to the max.
+	 */
+	void RestoreBurstEnergy(float Amount);
+	void RestoreBetweenRound();
 };
 

@@ -2,6 +2,7 @@
 #include "Ring/FBRingBounds.h"
 #include "Camera/FBBroadcastCamera.h"
 #include "Combat/FBBoxerCharacter.h"
+#include "Training/FBHeavyBag.h"
 #include "Combat/FBCombatTypes.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SpotLightComponent.h"
@@ -25,6 +26,7 @@ namespace
 	const FName FloorTag(TEXT("FB_P1Floor"));
 	const FName RingPropTag(TEXT("FB_P1RingProp"));
 	const FName OpponentTag(TEXT("FB_P1Opponent"));
+	const FName GymLightTag(TEXT("FB_P1GymLight"));
 
 	/** Half-size of a 20 ft pro ring inside the ropes (cm). */
 	constexpr float CanvasHalf = 305.f;
@@ -88,6 +90,120 @@ namespace
 		return Actor;
 	}
 
+	void DestroyByTag(UWorld* World, FName Tag)
+	{
+		TArray<AActor*> ToDestroy;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->ActorHasTag(Tag))
+			{
+				ToDestroy.Add(*It);
+			}
+		}
+		for (AActor* Actor : ToDestroy)
+		{
+			if (Actor)
+			{
+				Actor->Destroy();
+			}
+		}
+	}
+
+	/**
+	 * Why: 1v1 AI should feel like a neighborhood gym. The fight stays on the
+	 * same 20 ft ring, so the playable box does not change.
+	 * What: a wood floor under the platform, brick walls, a low ceiling, beams,
+	 * dirty windows, four heavy bags, a bench, a bucket, a mirror, and two
+	 * posters. The bags and walls do not block. The floor is the ground.
+	 */
+	void SpawnOldSchoolGym(UWorld* World, UStaticMesh* Cube, UStaticMesh* Cylinder)
+	{
+		if (!Cube)
+		{
+			return;
+		}
+
+		const FLinearColor Wood(0.36f, 0.22f, 0.12f);
+		const FLinearColor WoodDark(0.24f, 0.14f, 0.08f);
+		const FLinearColor Brick(0.42f, 0.20f, 0.14f);
+		const FLinearColor BrickDark(0.28f, 0.13f, 0.10f);
+		const FLinearColor Glass(0.72f, 0.80f, 0.74f);
+		const FLinearColor Leather(0.10f, 0.07f, 0.05f);
+		const FLinearColor Metal(0.45f, 0.42f, 0.38f);
+		const FLinearColor Ceiling(0.10f, 0.09f, 0.08f);
+		const FLinearColor PosterCream(0.78f, 0.70f, 0.52f);
+		const FLinearColor PosterRed(0.55f, 0.16f, 0.13f);
+
+		const float Room = 1400.f;
+		const float RoomScale = (Room * 2.f) / 100.f;
+
+		// The ring platform occupies the middle. This floor is the gym around it.
+		SpawnMeshActor(World, Cube, FVector(0.f, 0.f, -96.f), FRotator::ZeroRotator,
+			FVector(RoomScale, RoomScale, 0.12f), Wood, true);
+		for (int32 Board = -4; Board <= 4; ++Board)
+		{
+			SpawnMeshActor(World, Cube, FVector(0.f, Board * 280.f, -88.f), FRotator::ZeroRotator,
+				FVector(RoomScale * 0.98f, 0.06f, 0.02f), WoodDark, false);
+		}
+
+		const float WallZ = 260.f;
+		const float WallH = 5.4f;
+		SpawnMeshActor(World, Cube, FVector(0.f, Room, WallZ), FRotator::ZeroRotator,
+			FVector(RoomScale, 0.45f, WallH), Brick, false);
+		SpawnMeshActor(World, Cube, FVector(0.f, -Room, WallZ), FRotator::ZeroRotator,
+			FVector(RoomScale, 0.45f, WallH), BrickDark, false);
+		SpawnMeshActor(World, Cube, FVector(Room, 0.f, WallZ), FRotator::ZeroRotator,
+			FVector(0.45f, RoomScale, WallH), Brick, false);
+		SpawnMeshActor(World, Cube, FVector(-Room, 0.f, WallZ), FRotator::ZeroRotator,
+			FVector(0.45f, RoomScale, WallH), BrickDark, false);
+
+		SpawnMeshActor(World, Cube, FVector(0.f, 0.f, 540.f), FRotator::ZeroRotator,
+			FVector(RoomScale, RoomScale, 0.12f), Ceiling, false);
+
+		const float BeamZ = 500.f;
+		for (int32 Beam = -1; Beam <= 1; ++Beam)
+		{
+			SpawnMeshActor(World, Cube, FVector(0.f, Beam * 520.f, BeamZ), FRotator::ZeroRotator,
+				FVector(RoomScale * 0.96f, 0.16f, 0.14f), WoodDark, false);
+		}
+
+		auto Window = [&](const FVector& Loc, const FVector& Scale)
+		{
+			SpawnMeshActor(World, Cube, Loc, FRotator::ZeroRotator, Scale, Glass, false);
+		};
+		Window(FVector(0.f, Room - 40.f, 360.f), FVector(2.4f, 0.08f, 0.9f));
+		Window(FVector(-520.f, Room - 40.f, 360.f), FVector(1.4f, 0.08f, 0.7f));
+		Window(FVector(520.f, Room - 40.f, 360.f), FVector(1.4f, 0.08f, 0.7f));
+		Window(FVector(Room - 40.f, 200.f, 340.f), FVector(0.08f, 1.6f, 0.8f));
+		Window(FVector(-(Room - 40.f), -180.f, 340.f), FVector(0.08f, 1.6f, 0.8f));
+
+		if (Cylinder)
+		{
+			const float BagX[] = {-520.f, -180.f, 180.f, 520.f};
+			for (float X : BagX)
+			{
+				SpawnMeshActor(World, Cylinder, FVector(X, Room - 180.f, 430.f), FRotator::ZeroRotator,
+					FVector(0.06f, 0.06f, 1.1f), Metal, false);
+				SpawnMeshActor(World, Cylinder, FVector(X, Room - 180.f, 210.f), FRotator::ZeroRotator,
+					FVector(0.72f, 0.72f, 2.3f), Leather, false);
+			}
+			SpawnMeshActor(World, Cylinder, FVector(480.f, -520.f, 22.f), FRotator::ZeroRotator,
+				FVector(0.32f, 0.32f, 0.36f), Metal, false);
+		}
+
+		SpawnMeshActor(World, Cube, FVector(-1100.f, 80.f, 28.f), FRotator::ZeroRotator,
+			FVector(0.55f, 2.4f, 0.32f), Wood, false);
+		SpawnMeshActor(World, Cube, FVector(-1100.f, 80.f, 52.f), FRotator::ZeroRotator,
+			FVector(0.62f, 2.5f, 0.08f), WoodDark, false);
+
+		SpawnMeshActor(World, Cube, FVector(-(Room - 50.f), 40.f, 170.f), FRotator::ZeroRotator,
+			FVector(0.06f, 3.4f, 1.7f), FLinearColor(0.16f, 0.18f, 0.20f), false);
+		SpawnMeshActor(World, Cube, FVector(Room - 50.f, 220.f, 190.f), FRotator::ZeroRotator,
+			FVector(0.06f, 0.9f, 1.15f), PosterCream, false);
+		SpawnMeshActor(World, Cube, FVector(Room - 50.f, -180.f, 170.f), FRotator::ZeroRotator,
+			FVector(0.06f, 0.7f, 0.95f), PosterRed, false);
+	}
+
 	void ClearOldRingProps(UWorld* World)
 	{
 		TArray<AActor*> ToDestroy;
@@ -112,7 +228,7 @@ namespace
 	}
 }
 
-AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World)
+AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World, bool bOldSchoolGym)
 {
 	ClearOldRingProps(World);
 
@@ -238,57 +354,99 @@ AActor* UFBP1ArenaBootstrap::SpawnFloor(UWorld* World)
 	SpawnHiddenWall(FVector(CanvasHalf + 10.f, 0.f, WallZ), FVector(WallT, RopeLenScale, WallH));
 	SpawnHiddenWall(FVector(-(CanvasHalf + 10.f), 0.f, WallZ), FVector(WallT, RopeLenScale, WallH));
 
-	// Dark bowl around the ring so the lit canvas is the only bright surface.
-	const float Bowl = 1800.f;
-	const float BowlScale = (Bowl * 2.f) / 100.f;
-	SpawnMeshActor(World, Cube, FVector(0.f, 0.f, -8.f), FRotator::ZeroRotator,
-		FVector(BowlScale, BowlScale, 0.08f), ArenaDark, true);
-	const float WallScaleZ = 10.f;
-	const float WallCenterZ = 500.f;
-	SpawnMeshActor(World, Cube, FVector(0.f, Bowl, WallCenterZ), FRotator::ZeroRotator,
-		FVector(BowlScale, 0.4f, WallScaleZ), ArenaDark, false);
-	SpawnMeshActor(World, Cube, FVector(0.f, -Bowl, WallCenterZ), FRotator::ZeroRotator,
-		FVector(BowlScale, 0.4f, WallScaleZ), ArenaDark, false);
-	SpawnMeshActor(World, Cube, FVector(Bowl, 0.f, WallCenterZ), FRotator::ZeroRotator,
-		FVector(0.4f, BowlScale, WallScaleZ), ArenaDark, false);
-	SpawnMeshActor(World, Cube, FVector(-Bowl, 0.f, WallCenterZ), FRotator::ZeroRotator,
-		FVector(0.4f, BowlScale, WallScaleZ), ArenaDark, false);
+	if (bOldSchoolGym)
+	{
+		SpawnOldSchoolGym(World, Cube, Cylinder);
+	}
+	else
+	{
+		// Dark bowl around the ring so the lit canvas is the only bright surface.
+		const float Bowl = 1800.f;
+		const float BowlScale = (Bowl * 2.f) / 100.f;
+		SpawnMeshActor(World, Cube, FVector(0.f, 0.f, -8.f), FRotator::ZeroRotator,
+			FVector(BowlScale, BowlScale, 0.08f), ArenaDark, true);
+		const float WallScaleZ = 10.f;
+		const float WallCenterZ = 500.f;
+		SpawnMeshActor(World, Cube, FVector(0.f, Bowl, WallCenterZ), FRotator::ZeroRotator,
+			FVector(BowlScale, 0.4f, WallScaleZ), ArenaDark, false);
+		SpawnMeshActor(World, Cube, FVector(0.f, -Bowl, WallCenterZ), FRotator::ZeroRotator,
+			FVector(BowlScale, 0.4f, WallScaleZ), ArenaDark, false);
+		SpawnMeshActor(World, Cube, FVector(Bowl, 0.f, WallCenterZ), FRotator::ZeroRotator,
+			FVector(0.4f, BowlScale, WallScaleZ), ArenaDark, false);
+		SpawnMeshActor(World, Cube, FVector(-Bowl, 0.f, WallCenterZ), FRotator::ZeroRotator,
+			FVector(0.4f, BowlScale, WallScaleZ), ArenaDark, false);
+	}
 
 	return Floor;
 }
 
-void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
+void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World, bool bOldSchoolGym)
 {
-	auto TuneKey = [](UDirectionalLightComponent* Comp)
+	DestroyByTag(World, GymLightTag);
+
+	const FLinearColor KeyColor = bOldSchoolGym ? FLinearColor(1.f, 0.82f, 0.62f) : FLinearColor(1.f, 0.96f, 0.90f);
+	const FLinearColor FillColor = bOldSchoolGym ? FLinearColor(1.f, 0.74f, 0.52f) : FLinearColor(0.85f, 0.90f, 1.f);
+	const float KeyIntensity = bOldSchoolGym ? 6.5f : 10.f;
+	const float FillIntensity = bOldSchoolGym ? 2.8f : 6.f;
+
+	// Directional, spot, and point lights default to Stationary. This project
+	// disables static lighting, so a shadow-casting stationary light has no
+	// built channel and the ring stays black. The root has to be Movable
+	// before the rotation, or PIE refuses the turn.
+	auto ForceMovable = [](AActor* Actor, USceneComponent* Comp)
+	{
+		if (Actor)
+		{
+			if (USceneComponent* Root = Actor->GetRootComponent())
+			{
+				Root->SetMobility(EComponentMobility::Movable);
+			}
+		}
+		if (Comp)
+		{
+			Comp->SetMobility(EComponentMobility::Movable);
+		}
+	};
+	auto TuneKey = [KeyColor, KeyIntensity](UDirectionalLightComponent* Comp)
 	{
 		if (!Comp)
 		{
 			return;
 		}
-		Comp->SetIntensity(10.f);
-		Comp->SetLightColor(FLinearColor(1.f, 0.96f, 0.90f));
+		Comp->SetMobility(EComponentMobility::Movable);
+		Comp->SetIntensity(KeyIntensity);
+		Comp->SetLightColor(KeyColor);
 		Comp->SetAtmosphereSunLight(false);
 		Comp->SetCastShadows(true);
 	};
-	auto TuneFill = [](UDirectionalLightComponent* Comp)
+	auto TuneFill = [FillColor, FillIntensity](UDirectionalLightComponent* Comp)
 	{
 		if (!Comp)
 		{
 			return;
 		}
-		Comp->SetIntensity(6.f);
-		Comp->SetLightColor(FLinearColor(0.85f, 0.90f, 1.f));
+		Comp->SetMobility(EComponentMobility::Movable);
+		Comp->SetIntensity(FillIntensity);
+		Comp->SetLightColor(FillColor);
 		Comp->SetAtmosphereSunLight(false);
 		Comp->SetCastShadows(false);
 	};
 
 	const FName KeyTag(TEXT("FB_P1KeyLight"));
 	const FName FillTag(TEXT("FB_P1FillLight"));
+	const FName DeadLightTag(TEXT("FB_P1DeadLight"));
 	bool bHasKey = false;
 	bool bHasFill = false;
+	ADirectionalLight* KeyActor = nullptr;
+	UDirectionalLightComponent* KeyComp = nullptr;
 	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
 	{
+		if (It->ActorHasTag(DeadLightTag))
+		{
+			continue;
+		}
 		UDirectionalLightComponent* Comp = Cast<UDirectionalLightComponent>(It->GetLightComponent());
+		ForceMovable(*It, Comp);
 		if (It->ActorHasTag(FillTag))
 		{
 			bHasFill = true;
@@ -298,9 +456,26 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 		{
 			bHasKey = true;
 			It->Tags.Add(KeyTag);
-			It->SetActorRotation(FRotator(-48.f, 30.f, 0.f));
 			TuneKey(Comp);
+			It->SetActorRotation(FRotator(-48.f, 30.f, 0.f));
+			KeyActor = *It;
+			KeyComp = Comp;
 		}
+	}
+	if (KeyComp && KeyComp->Mobility != EComponentMobility::Movable)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FinalBell: %s stayed mobility %d with static lighting off. Replacing it with a movable key."),
+			KeyActor ? *KeyActor->GetName() : TEXT("key"), (int32)KeyComp->Mobility);
+		KeyComp->SetIntensity(0.f);
+		KeyComp->SetVisibility(false);
+		if (KeyActor)
+		{
+			KeyActor->Tags.Add(DeadLightTag);
+			KeyActor->SetActorHiddenInGame(true);
+		}
+		bHasKey = false;
+		KeyComp = nullptr;
+		KeyActor = nullptr;
 	}
 	if (!bHasKey)
 	{
@@ -310,7 +485,11 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 		{
 			Light->Tags.Add(ArenaTag);
 			Light->Tags.Add(KeyTag);
-			TuneKey(Cast<UDirectionalLightComponent>(Light->GetLightComponent()));
+			UDirectionalLightComponent* SpawnedKey = Cast<UDirectionalLightComponent>(Light->GetLightComponent());
+			ForceMovable(Light, SpawnedKey);
+			TuneKey(SpawnedKey);
+			KeyActor = Light;
+			KeyComp = SpawnedKey;
 		}
 	}
 	if (!bHasFill)
@@ -321,17 +500,19 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 		{
 			Fill->Tags.Add(ArenaTag);
 			Fill->Tags.Add(FillTag);
-			TuneFill(Cast<UDirectionalLightComponent>(Fill->GetLightComponent()));
+			UDirectionalLightComponent* SpawnedFill = Cast<UDirectionalLightComponent>(Fill->GetLightComponent());
+			ForceMovable(Fill, SpawnedFill);
+			TuneFill(SpawnedFill);
 		}
 	}
 
-	auto TuneSky = [](USkyLightComponent* Comp)
+	auto TuneSky = [bOldSchoolGym](USkyLightComponent* Comp)
 	{
 		if (!Comp)
 		{
 			return;
 		}
-		Comp->SetIntensity(2.2f);
+		Comp->SetIntensity(bOldSchoolGym ? 0.55f : 2.2f);
 		Comp->bLowerHemisphereIsBlack = false;
 		Comp->SetMobility(EComponentMobility::Movable);
 		Comp->RecaptureSky();
@@ -341,7 +522,9 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 	for (TActorIterator<ASkyLight> It(World); It; ++It)
 	{
 		bHasSky = true;
-		TuneSky(It->GetLightComponent());
+		USkyLightComponent* SkyComp = It->GetLightComponent();
+		ForceMovable(*It, SkyComp);
+		TuneSky(SkyComp);
 	}
 	if (!bHasSky)
 	{
@@ -353,14 +536,15 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 		}
 	}
 
-	auto TuneSpot = [](USpotLightComponent* Comp)
+	auto TuneSpot = [bOldSchoolGym](USpotLightComponent* Comp)
 	{
 		if (!Comp)
 		{
 			return;
 		}
-		Comp->SetIntensity(18000.f);
-		Comp->SetLightColor(FLinearColor(1.f, 0.97f, 0.92f));
+		Comp->SetMobility(EComponentMobility::Movable);
+		Comp->SetIntensity(bOldSchoolGym ? 7000.f : 18000.f);
+		Comp->SetLightColor(bOldSchoolGym ? FLinearColor(1.f, 0.78f, 0.55f) : FLinearColor(1.f, 0.97f, 0.92f));
 		Comp->SetAttenuationRadius(2200.f);
 		Comp->SetInnerConeAngle(28.f);
 		Comp->SetOuterConeAngle(70.f);
@@ -370,12 +554,14 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 	bool bHasSpots = false;
 	for (TActorIterator<ASpotLight> It(World); It; ++It)
 	{
+		USpotLightComponent* SpotComp = Cast<USpotLightComponent>(It->GetLightComponent());
+		ForceMovable(*It, SpotComp);
 		if (!It->ActorHasTag(ArenaTag))
 		{
 			continue;
 		}
 		bHasSpots = true;
-		TuneSpot(Cast<USpotLightComponent>(It->GetLightComponent()));
+		TuneSpot(SpotComp);
 	}
 	if (!bHasSpots)
 	{
@@ -402,15 +588,17 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 	bool bHasPoint = false;
 	for (TActorIterator<APointLight> It(World); It; ++It)
 	{
+		ForceMovable(*It, It->GetLightComponent());
 		if (It->ActorHasTag(ArenaTag))
 		{
 			bHasPoint = true;
 			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(It->GetLightComponent()))
 			{
-				Comp->SetIntensity(6000.f);
+				Comp->SetMobility(EComponentMobility::Movable);
+				Comp->SetIntensity(bOldSchoolGym ? 2500.f : 6000.f);
 				Comp->SetAttenuationRadius(1800.f);
 				Comp->SetCastShadows(false);
-				Comp->SetLightColor(FLinearColor(1.f, 0.95f, 0.88f));
+				Comp->SetLightColor(bOldSchoolGym ? FLinearColor(1.f, 0.72f, 0.45f) : FLinearColor(1.f, 0.95f, 0.88f));
 			}
 		}
 	}
@@ -423,13 +611,50 @@ void UFBP1ArenaBootstrap::SpawnLighting(UWorld* World)
 			Point->Tags.Add(ArenaTag);
 			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(Point->GetLightComponent()))
 			{
-				Comp->SetIntensity(6000.f);
+				Comp->SetMobility(EComponentMobility::Movable);
+				Comp->SetIntensity(bOldSchoolGym ? 2500.f : 6000.f);
 				Comp->SetAttenuationRadius(1800.f);
 				Comp->SetCastShadows(false);
-				Comp->SetLightColor(FLinearColor(1.f, 0.95f, 0.88f));
+				Comp->SetLightColor(bOldSchoolGym ? FLinearColor(1.f, 0.72f, 0.45f) : FLinearColor(1.f, 0.95f, 0.88f));
 			}
 		}
 	}
+
+	if (bOldSchoolGym)
+	{
+		const FVector BulbLocs[] = {
+			FVector(-420.f, 420.f, 470.f),
+			FVector(420.f, 420.f, 470.f),
+			FVector(-420.f, -280.f, 470.f),
+			FVector(420.f, -280.f, 470.f)
+		};
+		for (const FVector& Loc : BulbLocs)
+		{
+			FActorSpawnParameters Params;
+			APointLight* Bulb = World->SpawnActor<APointLight>(Loc, FRotator::ZeroRotator, Params);
+			if (!Bulb)
+			{
+				continue;
+			}
+			Bulb->Tags.Add(ArenaTag);
+			Bulb->Tags.Add(GymLightTag);
+			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(Bulb->GetLightComponent()))
+			{
+				ForceMovable(Bulb, Comp);
+				Comp->SetMobility(EComponentMobility::Movable);
+				Comp->SetIntensity(4500.f);
+				Comp->SetAttenuationRadius(900.f);
+				Comp->SetCastShadows(false);
+				Comp->SetLightColor(FLinearColor(1.f, 0.62f, 0.32f));
+			}
+		}
+	}
+
+	const int32 KeyMobility = KeyComp ? (int32)KeyComp->Mobility : -1;
+	UE_LOG(LogTemp, Warning, TEXT("FinalBell SpawnLighting gym=%d key=%s mobility=%d"),
+		bOldSchoolGym ? 1 : 0,
+		KeyActor ? *KeyActor->GetName() : TEXT("none"),
+		KeyMobility);
 }
 
 AFBRingBounds* UFBP1ArenaBootstrap::SpawnRing(UWorld* World)
@@ -471,9 +696,15 @@ AFBBoxerCharacter* UFBP1ArenaBootstrap::SpawnOpponent(UWorld* World, const FVect
 {
 	for (TActorIterator<AFBBoxerCharacter> It(World); It; ++It)
 	{
-		if (It->ActorHasTag(OpponentTag))
+		// A player pawn must not be reused as the opponent. That is the case
+		// that left the ring with one fighter and refused the bout.
+		if (It->ActorHasTag(OpponentTag) && !It->IsPlayerControlled())
 		{
 			It->ApplyBasicSkin(EFBCornerSkin::RedCorner);
+			if (!It->GetController())
+			{
+				It->SpawnDefaultController();
+			}
 			return *It;
 		}
 	}
@@ -487,30 +718,68 @@ AFBBoxerCharacter* UFBP1ArenaBootstrap::SpawnOpponent(UWorld* World, const FVect
 		Opponent->Tags.Add(ArenaTag);
 		Opponent->Stance = EFBStance::Orthodox;
 		Opponent->ApplyBasicSkin(EFBCornerSkin::RedCorner);
+		Opponent->AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+		if (!Opponent->GetController())
+		{
+			Opponent->SpawnDefaultController();
+		}
 	}
 	return Opponent;
 }
 
 AFBBroadcastCamera* UFBP1ArenaBootstrap::SpawnCamera(UWorld* World, AFBBoxerCharacter* A, AFBBoxerCharacter* B)
 {
+	AFBBroadcastCamera* Cam = nullptr;
 	for (TActorIterator<AFBBroadcastCamera> It(World); It; ++It)
 	{
-		It->SetFighters(A, B);
-		It->ForcePossessedView();
-		return *It;
+		if (!IsValid(*It))
+		{
+			continue;
+		}
+		const AActor* Owner = It->GetOwner();
+		if (!Owner || Owner == A)
+		{
+			Cam = *It;
+			if (!Owner)
+			{
+				break;
+			}
+		}
 	}
 
-	AFBBroadcastCamera* Cam = World->SpawnActor<AFBBroadcastCamera>(FVector(0.f, -280.f, 170.f), FRotator(-12.f, 90.f, 0.f));
-	if (Cam)
+	if (!Cam)
 	{
-		Cam->Tags.Add(ArenaTag);
-		Cam->SetFighters(A, B);
-		Cam->ForcePossessedView();
+		Cam = World->SpawnActor<AFBBroadcastCamera>(FVector(0.f, -280.f, 170.f), FRotator(-12.f, 90.f, 0.f));
+		if (Cam)
+		{
+			Cam->Tags.Add(ArenaTag);
+		}
+	}
+	if (!Cam)
+	{
+		return nullptr;
+	}
+
+	Cam->SetFighters(A, B);
+	if (A)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(A->GetController()))
+		{
+			Cam->ForceViewForController(PC);
+		}
+	}
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (PC && PC->IsLocalController() && PC->GetPawn() == A)
+		{
+			Cam->ForceViewForController(PC);
+		}
 	}
 	return Cam;
 }
 
-void UFBP1ArenaBootstrap::EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlayer, AFBBoxerCharacter*& OutOpponent, AFBBroadcastCamera*& OutCamera, bool bSpawnOpponentIfMissing)
+void UFBP1ArenaBootstrap::EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlayer, AFBBoxerCharacter*& OutOpponent, AFBBroadcastCamera*& OutCamera, bool bSpawnOpponentIfMissing, bool bOldSchoolGym)
 {
 	OutPlayer = nullptr;
 	OutOpponent = nullptr;
@@ -520,8 +789,8 @@ void UFBP1ArenaBootstrap::EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlay
 		return;
 	}
 
-	SpawnFloor(World);
-	SpawnLighting(World);
+	SpawnFloor(World, bOldSchoolGym);
+	SpawnLighting(World, bOldSchoolGym);
 	SpawnRing(World);
 
 	OutPlayer = FindFirstPlayerBoxer(World);
@@ -557,8 +826,264 @@ void UFBP1ArenaBootstrap::EnsureArena(UWorld* World, AFBBoxerCharacter*& OutPlay
 		OutCamera = SpawnCamera(World, OutPlayer, OutOpponent);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("FinalBell P1 arena ready (player=%s opponent=%s spawnOpp=%d)"),
+	UE_LOG(LogTemp, Log, TEXT("FinalBell P1 arena ready (player=%s opponent=%s spawnOpp=%d gym=%d)"),
 		OutPlayer ? *OutPlayer->GetName() : TEXT("none"),
 		OutOpponent ? *OutOpponent->GetName() : TEXT("none"),
-		bSpawnOpponentIfMissing ? 1 : 0);
+		bSpawnOpponentIfMissing ? 1 : 0,
+		bOldSchoolGym ? 1 : 0);
+}
+
+void UFBP1ArenaBootstrap::EnsureMatchLook(UWorld* World, bool bOldSchoolGym, AFBBoxerCharacter* Player, AFBBoxerCharacter* Opponent)
+{
+	if (!World)
+	{
+		return;
+	}
+	SpawnFloor(World, bOldSchoolGym);
+	SpawnLighting(World, bOldSchoolGym);
+	SpawnRing(World);
+	AFBBroadcastCamera* Cam = SpawnCamera(World, Player, Opponent);
+	if (!Cam)
+	{
+		return;
+	}
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalController())
+		{
+			continue;
+		}
+		if (PC->GetPawn() && PC->GetPawn() != Player)
+		{
+			continue;
+		}
+		Cam->ForceViewForController(PC);
+	}
+}
+
+namespace BagRoom
+{
+	const FName ShellTag(TEXT("FB_BagRoom"));
+	const FName LightTag(TEXT("FB_BagRoomLight"));
+	/** North of the old-school gym wall at Y=1400. The bout ring stays at the origin. */
+	constexpr float OriginY = 2800.f;
+	constexpr float HangZ = 252.f;
+	constexpr float RowSpacing = 340.f;
+
+	AStaticMeshActor* Piece(
+		UWorld* World,
+		UStaticMesh* Mesh,
+		const FVector& Loc,
+		const FVector& Scale,
+		const FLinearColor& Color,
+		bool bCollision)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AStaticMeshActor* Actor = World->SpawnActor<AStaticMeshActor>(Loc, FRotator::ZeroRotator, Params);
+		if (!Actor)
+		{
+			return nullptr;
+		}
+		Actor->Tags.Add(ShellTag);
+		if (UStaticMeshComponent* Comp = Actor->GetStaticMeshComponent())
+		{
+			Comp->SetMobility(EComponentMobility::Movable);
+			Comp->SetStaticMesh(Mesh);
+			Comp->SetWorldScale3D(Scale);
+			if (bCollision)
+			{
+				Comp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+				Comp->SetCollisionResponseToAllChannels(ECR_Block);
+			}
+			else
+			{
+				Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+			TintMesh(Comp, Color);
+		}
+		return Actor;
+	}
+}
+
+void UFBP1ArenaBootstrap::DestroyBagRoom(UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+	TArray<AActor*> ToDestroy;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(BagRoom::ShellTag) || It->ActorHasTag(BagRoom::LightTag))
+		{
+			ToDestroy.Add(*It);
+		}
+	}
+	for (AActor* Actor : ToDestroy)
+	{
+		if (Actor)
+		{
+			Actor->Destroy();
+		}
+	}
+}
+
+void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBag)
+{
+	OutActiveBag = nullptr;
+	if (!World)
+	{
+		return;
+	}
+
+	// The key light has to be Movable. r.AllowStaticLighting is off, so a
+	// stationary directional leaves this room black the same way the ring went black.
+	SpawnLighting(World, true);
+
+	bool bHasShell = false;
+	bool bHasRoomLight = false;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->ActorHasTag(BagRoom::ShellTag))
+		{
+			bHasShell = true;
+		}
+		if (It->ActorHasTag(BagRoom::LightTag))
+		{
+			bHasRoomLight = true;
+		}
+		if (AFBHeavyBag* Bag = Cast<AFBHeavyBag>(*It))
+		{
+			if (Bag->IsActiveBag())
+			{
+				OutActiveBag = Bag;
+			}
+		}
+	}
+
+	const FVector Center(0.f, BagRoom::OriginY, 0.f);
+	if (!bHasShell)
+	{
+		UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+		if (Cube)
+		{
+			const FLinearColor Wood(0.38f, 0.23f, 0.13f);
+			const FLinearColor WoodDark(0.22f, 0.13f, 0.08f);
+			const FLinearColor Brick(0.45f, 0.22f, 0.15f);
+			const FLinearColor BrickDark(0.30f, 0.14f, 0.11f);
+			const FLinearColor Ceiling(0.14f, 0.12f, 0.10f);
+			const FLinearColor Glass(0.62f, 0.72f, 0.68f);
+
+			// 24 m by 18 m. The active bag is the center. Two meters of clear floor fit around it.
+			BagRoom::Piece(World, Cube, Center + FVector(0.f, 0.f, -12.f), FVector(24.f, 18.f, 0.24f), Wood, true);
+			for (int32 Board = -3; Board <= 3; ++Board)
+			{
+				BagRoom::Piece(World, Cube, Center + FVector(0.f, Board * 220.f, -1.f), FVector(23.2f, 0.05f, 0.02f), WoodDark, false);
+			}
+
+			const float WallZ = 160.f;
+			BagRoom::Piece(World, Cube, Center + FVector(0.f, 900.f, WallZ), FVector(24.6f, 0.42f, 3.3f), Brick, true);
+			BagRoom::Piece(World, Cube, Center + FVector(0.f, -900.f, WallZ), FVector(24.6f, 0.42f, 3.3f), BrickDark, true);
+			BagRoom::Piece(World, Cube, Center + FVector(1200.f, 0.f, WallZ), FVector(0.42f, 18.4f, 3.3f), Brick, true);
+			BagRoom::Piece(World, Cube, Center + FVector(-1200.f, 0.f, WallZ), FVector(0.42f, 18.4f, 3.3f), BrickDark, true);
+			BagRoom::Piece(World, Cube, Center + FVector(0.f, 0.f, 330.f), FVector(24.6f, 18.4f, 0.12f), Ceiling, false);
+
+			// Beam the bags hang from. Its underside is the hang height.
+			BagRoom::Piece(World, Cube, Center + FVector(0.f, 0.f, BagRoom::HangZ + 9.f), FVector(20.f, 0.22f, 0.18f), WoodDark, false);
+			BagRoom::Piece(World, Cube, Center + FVector(0.f, 878.f, 250.f), FVector(6.f, 0.06f, 0.9f), Glass, false);
+			BagRoom::Piece(World, Cube, Center + FVector(1178.f, -200.f, 230.f), FVector(0.06f, 3.2f, 0.8f), Glass, false);
+		}
+	}
+
+	if (!bHasRoomLight)
+	{
+		const FVector Bulbs[] = {
+			Center + FVector(-420.f, 0.f, 290.f),
+			Center + FVector(420.f, 0.f, 290.f),
+			Center + FVector(0.f, -280.f, 300.f),
+			Center + FVector(0.f, 280.f, 300.f)
+		};
+		for (const FVector& Loc : Bulbs)
+		{
+			FActorSpawnParameters Params;
+			APointLight* Bulb = World->SpawnActor<APointLight>(Loc, FRotator::ZeroRotator, Params);
+			if (!Bulb)
+			{
+				continue;
+			}
+			Bulb->Tags.Add(BagRoom::LightTag);
+			if (UPointLightComponent* Comp = Cast<UPointLightComponent>(Bulb->GetLightComponent()))
+			{
+				if (USceneComponent* Root = Bulb->GetRootComponent())
+				{
+					Root->SetMobility(EComponentMobility::Movable);
+				}
+				Comp->SetMobility(EComponentMobility::Movable);
+				Comp->SetIntensity(6500.f);
+				Comp->SetAttenuationRadius(1100.f);
+				Comp->SetCastShadows(false);
+				Comp->SetLightColor(FLinearColor(1.f, 0.72f, 0.48f));
+			}
+		}
+
+		const FVector SpotLoc = Center + FVector(180.f, -420.f, 310.f);
+		const FRotator Aim = (Center + FVector(0.f, 0.f, 140.f) - SpotLoc).Rotation();
+		FActorSpawnParameters SpotParams;
+		ASpotLight* Spot = World->SpawnActor<ASpotLight>(SpotLoc, Aim, SpotParams);
+		if (Spot)
+		{
+			Spot->Tags.Add(BagRoom::LightTag);
+			if (USpotLightComponent* Comp = Cast<USpotLightComponent>(Spot->GetLightComponent()))
+			{
+				if (USceneComponent* Root = Spot->GetRootComponent())
+				{
+					Root->SetMobility(EComponentMobility::Movable);
+				}
+				Comp->SetMobility(EComponentMobility::Movable);
+				Comp->SetIntensity(9000.f);
+				Comp->SetAttenuationRadius(1400.f);
+				Comp->SetInnerConeAngle(22.f);
+				Comp->SetOuterConeAngle(48.f);
+				Comp->SetCastShadows(false);
+				Comp->SetLightColor(FLinearColor(1.f, 0.84f, 0.68f));
+			}
+		}
+	}
+
+	if (!World->GetAuthGameMode() || OutActiveBag)
+	{
+		return;
+	}
+
+	const float Slots[] = { -BagRoom::RowSpacing * 2.f, -BagRoom::RowSpacing, 0.f, BagRoom::RowSpacing, BagRoom::RowSpacing * 2.f };
+	for (float SlotX : Slots)
+	{
+		const bool bActive = FMath::IsNearlyZero(SlotX);
+		const FVector Hang(SlotX, BagRoom::OriginY, BagRoom::HangZ);
+		const FTransform Xform(FRotator::ZeroRotator, Hang);
+		AFBHeavyBag* Bag = World->SpawnActorDeferred<AFBHeavyBag>(
+			AFBHeavyBag::StaticClass(),
+			Xform,
+			nullptr,
+			nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (!Bag)
+		{
+			continue;
+		}
+		Bag->SetBagRole(bActive);
+		Bag = Cast<AFBHeavyBag>(UGameplayStatics::FinishSpawningActor(Bag, Xform));
+		if (bActive)
+		{
+			OutActiveBag = Bag;
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("FinalBell bag room Y=%.0f hangZ=%.0f spacing=%.0f active=%s"),
+		BagRoom::OriginY,
+		BagRoom::HangZ,
+		BagRoom::RowSpacing,
+		OutActiveBag ? *OutActiveBag->GetName() : TEXT("none"));
 }

@@ -1,4 +1,4 @@
-# Final Bell — Build Recipe (Windows)
+﻿# Final Bell — Build Recipe (Windows)
 
 ## Required tools
 
@@ -16,6 +16,29 @@ cd C:\Users\Shadow\Projects\final-bell\apps\game-unreal
 
 Or: right-click `FinalBell.uproject` → Generate Visual Studio project files → open `.sln` → build Development Editor.
 
+## Packaged client (remote partner share)
+
+```powershell
+cd C:\Users\Shadow\Projects\final-bell
+.\scripts\package_client.ps1
+```
+
+Archive: `apps/game-unreal/Packaged/Win64/`. Zip and share privately. Both machines must use the **same** package.
+
+## Listen-server host / join (port 7777)
+
+```powershell
+# Host (after packaging, or falls back to editor -game)
+.\scripts\host_listen_server.ps1
+
+# Partner
+.\scripts\join_listen_server.ps1 -HostAddress 100.x.y.z
+```
+
+In-game console: `FBHost`, `FBJoin <ip>`, `FBRoom`. Full remote checklist: [RemotePartnerMultiplayer.md](RemotePartnerMultiplayer.md). Local PIE first: [MultiplayerTest.md](MultiplayerTest.md).
+
+Default game port is set in `Config/DefaultEngine.ini` (`[URL] Port=7777`).
+
 ## Dedicated server (later packaging)
 
 ```powershell
@@ -30,9 +53,9 @@ python -m pip install -e ".[dev]"
 python -m pytest ..\..\tests\golden -q
 ```
 
-## Two-client smoke (after map exists)
+## Two-client smoke
 
-1. Host: `FinalBell.exe` or editor PIE listen server on port 7777  
-2. Client: `open 127.0.0.1:7777`  
-3. Record observed RTT/loss; confirm identical stamina/hit outcomes for the same intents  
-4. Do **not** label LAN PIE as a verified internet service
+1. Local: 2-player PIE listen server ([MultiplayerTest.md](MultiplayerTest.md))
+2. Remote: host `host_listen_server.ps1`, client `join_listen_server.ps1 -HostAddress <tailscale-ip>`
+3. Record observed RTT/loss; confirm identical stamina/hit outcomes for the same intents
+4. Do **not** label Tailscale listen-server as a verified public internet service

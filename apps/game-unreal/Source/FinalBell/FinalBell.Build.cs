@@ -27,6 +27,7 @@ public class FinalBell : ModuleRules
 			"GameplayAbilities",
 			"GameplayTasks",
 			"NetCore",
+			"Sockets",
 			"AIModule",
 			"AnimationCore"
 		});
@@ -34,7 +35,9 @@ public class FinalBell : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"DeveloperSettings",
+			"EngineSettings"
 		});
 	}
 }

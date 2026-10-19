@@ -32,3 +32,8 @@ See [docs/Progress.md](docs/Progress.md). A green editor/game compile requires V
 4. From repo root: `python -m pip install -e packages/domain-python` then `pytest tests/golden -q`.
 
 FightVantage is a separate candidate source project; it is not renamed by this repository.
+
+## Multiplayer testing
+
+1. Local two-window PIE: [docs/MultiplayerTest.md](docs/MultiplayerTest.md)
+2. Remote partner (packaged + Tailscale): [docs/RemotePartnerMultiplayer.md](docs/RemotePartnerMultiplayer.md)

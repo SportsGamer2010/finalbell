@@ -1,10 +1,11 @@
-# Final Bell — Local 2-player / second view test
+﻿# Final Bell — Local 2-player / second view test
 
 Yes: you can test a second player view on one PC without packaging.
+**Do this before remote partner tests** so combat authority bugs are not confused with NAT/firewall issues.
 
 ## Option A — PIE listen server (recommended)
 
-1. Open `Ring_P1` in Unreal Editor.
+1. Open `Ring_P1` in Unreal Editor (or let P1 auto-arena bootstrap on Entry).
 2. Project defaults are already **2 players / Listen Server**. Confirm in the Play dropdown if needed:
    - **Number of Players:** `2`
    - **Net Mode:** `Play As Listen Server`
@@ -39,9 +40,13 @@ Each human gets their **own orbit camera** looking at their opponent.
 
 Hits, damage, stamina, attack phases, and bout clock are authority-side. Clients send intents only.
 
-## Next networking checks
+## Local smoke checklist (FB-006 prep)
 
 - Both see glove extend on jab/cross
 - Block raises gloves and reduces damage
 - Damage applies once per attack id
-- Disconnect/reconnect comes later (P1 smoke first)
+- Host and client show the same accumulated damage after the same exchange
+
+## Remote partner (after local passes)
+
+See [RemotePartnerMultiplayer.md](RemotePartnerMultiplayer.md) — packaged (or editor `-game`) listen server + Tailscale + `FBJoin <ip>`.

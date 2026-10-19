@@ -1,0 +1,10 @@
+# Copy to inbox/moments/YOUTUBE_ID.txt to name plays by hand.
+# Times are positions in the GameAthlete upload.
+
+#roster
+OGSportsGamer
+Player Two
+
+#moments
+0:42 | OGSportsGamer | three | corner three
+1:15 | Player Two | dunk | fast break

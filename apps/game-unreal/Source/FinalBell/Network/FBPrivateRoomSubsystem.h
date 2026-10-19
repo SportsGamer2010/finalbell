@@ -1,4 +1,4 @@
-// Final Bell — private challenge/room foundation (FB-ENH-06 / P1)
+﻿// Final Bell — private challenge/room foundation (FB-ENH-06 / P1)
 // Session transport: use UE Online Sessions / null OSS locally until EOS/Steam is configured.
 #pragma once
 
@@ -16,6 +16,9 @@ struct FFBPrivateRoomInfo
 
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Network")
 	FString HostAddress;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Network")
+	int32 Port = 7777;
 
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Network")
 	int32 MaxPlayers = 2;
@@ -38,6 +41,17 @@ public:
 	FFBPrivateRoomInfo CreatePrivateRoom();
 
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Network")
+	void SetHostAddress(const FString& Address);
+
+	/** Restart current map as listen server on Port (default 7777). */
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Network")
+	bool HostListenServer(int32 Port = 7777);
+
+	/** Travel to host IP (or host:port). Room code is optional bookkeeping only for P1. */
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Network")
+	bool JoinByAddress(const FString& HostAddress, int32 Port = 7777);
+
+	UFUNCTION(BlueprintCallable, Category = "FinalBell|Network")
 	bool JoinPrivateRoom(const FString& RoomCode);
 
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Network")
@@ -46,9 +60,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Network")
 	FString GetSessionTransportNotes() const;
 
+	/** Best-effort non-loopback IPv4 for sharing over LAN/Tailscale. */
+	UFUNCTION(BlueprintPure, Category = "FinalBell|Network")
+	FString GetPreferredHostAddress() const;
+
 protected:
 	UPROPERTY()
 	FFBPrivateRoomInfo ActiveRoom;
 
 	FString GenerateRoomCode() const;
+	static FString NormalizeHostPort(const FString& HostAddress, int32 Port, FString& OutHost, int32& OutPort);
 };

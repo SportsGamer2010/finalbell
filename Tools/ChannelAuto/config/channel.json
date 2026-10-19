@@ -1,0 +1,36 @@
+{
+  "source": {
+    "name": "GameAthlete",
+    "handle": "@gameathlete",
+    "channel_id": "UCFOnI2zXhMeqMDlJWJTmhXw"
+  },
+  "destination": {
+    "name": "TechBeatsxGames",
+    "handle": "@TechBeatsxGames",
+    "channel_id": "UCxR_9dxq1OeOCJqW2-q-78A"
+  },
+  "poll_seconds": 600,
+  "max_height": 1080,
+  "videos_dir": "C:/Users/Shadow/Videos/ready for upload",
+  "max_duration_sec": 10800,
+  "youtube_privacy": "unlisted",
+  "upload_youtube": false,
+  "voices": {
+    "undisputed_commentary": "en-US-GuyNeural",
+    "league_highlights": "en-US-ChristopherNeural"
+  },
+  "playlists": [
+    {
+      "id": "PLLhVwQz29NhE",
+      "name": "Undisputed Bouts",
+      "profile": "knockout_highlight",
+      "url": "https://www.youtube.com/playlist?list=PLLhVwQz29NhE"
+    },
+    {
+      "id": "PLUgImi6WUKkE",
+      "name": "Underdogs 2KCL Games NBA2k27 Season 1",
+      "profile": "league_highlights",
+      "url": "https://www.youtube.com/playlist?list=PLUgImi6WUKkE"
+    }
+  ]
+}

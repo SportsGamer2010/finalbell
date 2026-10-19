@@ -57,3 +57,9 @@ Tools/Animation/incoming/**
 Tools/Animation/manifests/**
 !Tools/Animation/manifests/.gitkeep
 
+# GameAthlete -> TechBeats clip pipeline
+Tools/ChannelAuto/inbox/**
+Tools/ChannelAuto/outbox/**
+Tools/ChannelAuto/state/**
+Tools/ChannelAuto/secrets/**
+

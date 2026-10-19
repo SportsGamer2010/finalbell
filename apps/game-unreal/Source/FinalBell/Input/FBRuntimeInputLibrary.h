@@ -28,6 +28,12 @@ struct FFBRuntimeInputBundle
 	UPROPERTY() TObjectPtr<UInputAction> Weave = nullptr;
 	UPROPERTY() TObjectPtr<UInputAction> BodyMod = nullptr;
 	UPROPERTY() TObjectPtr<UInputAction> PowerMod = nullptr;
+	UPROPERTY() TObjectPtr<UInputAction> Loose = nullptr;
+	UPROPERTY() TObjectPtr<UInputAction> Stance = nullptr;
+	UPROPERTY() TObjectPtr<UInputAction> Taunt = nullptr;
+	UPROPERTY() TObjectPtr<UInputAction> Headbutt = nullptr;
+	UPROPERTY() TObjectPtr<UInputAction> LeftThumb = nullptr;
+	UPROPERTY() TObjectPtr<UInputAction> RightThumb = nullptr;
 };
 
 UCLASS()
@@ -36,6 +42,6 @@ class FINALBELL_API UFBRuntimeInputLibrary : public UBlueprintFunctionLibrary
 	GENERATED_BODY()
 
 public:
-	/** Competitor scheme: face buttons + RS punch flick; R2 block; L2 weave. */
+	/** Undisputed Competitor: face or right-stick punches, R2 block, L2 weave, L1 body, R1 power. */
 	static FFBRuntimeInputBundle EnsureBoxerInput(UObject* Outer);
 };

@@ -1,5 +1,6 @@
 #include "Camera/FBBroadcastCamera.h"
 #include "Combat/FBBoxerCharacter.h"
+#include "Training/FBHeavyBag.h"
 #include "Camera/CameraComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
@@ -69,19 +70,28 @@ void AFBBroadcastCamera::ForceViewForController(APlayerController* PC)
 
 void AFBBroadcastCamera::SetFighters(AFBBoxerCharacter* Player, AFBBoxerCharacter* Opponent)
 {
-	const bool bFirstFrame = !bHasFramed && Player && Opponent;
+	const bool bFirstFrame = Player && Opponent && (!bHasFramed || bTrainingFramed);
 	PlayerFighter = Player;
 	OpponentFighter = Opponent;
+	if (Opponent)
+	{
+		bTrainingFramed = false;
+	}
 
 	if (bFirstFrame)
 	{
-		const FVector ToOpp = (Opponent->GetActorLocation() - Player->GetActorLocation()).GetSafeNormal2D();
-		if (!ToOpp.IsNearlyZero())
+		const FVector Line = (Opponent->GetActorLocation() - Player->GetActorLocation()).GetSafeNormal2D();
+		if (!Line.IsNearlyZero())
 		{
-			// Yaw 180 from the opponent puts the lens behind the controlled fighter.
-			OrbitYaw = ToOpp.Rotation().Yaw + 180.f;
+			// Profile side of the fight line, preferring the south apron.
+			FVector Side(-Line.Y, Line.X, 0.f);
+			if (FVector::DotProduct(Side, FVector(0.f, -1.f, 0.f)) < 0.f)
+			{
+				Side *= -1.f;
+			}
+			OrbitYaw = Side.Rotation().Yaw;
 		}
-		OrbitPitch = 5.f;
+		OrbitPitch = 8.f;
 		bHasFramed = true;
 		SnapToFrame();
 		ForcePossessedView();
@@ -137,6 +147,19 @@ void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) 
 	const FVector PlayerLoc = Player->GetActorLocation();
 	const FVector PlayerFeet = PlayerLoc - FVector(0.f, 0.f, PlayerHalf);
 
+	const AFBHeavyBag* TrainingBag = nullptr;
+	if (!OpponentFighter.IsValid())
+	{
+		for (TActorIterator<AFBHeavyBag> It(GetWorld()); It; ++It)
+		{
+			if (IsValid(*It) && It->IsActiveBag())
+			{
+				TrainingBag = *It;
+				break;
+			}
+		}
+	}
+
 	FVector OppLoc = PlayerLoc + Player->GetActorForwardVector().GetSafeNormal2D() * 180.f;
 	float OppHalf = PlayerHalf;
 	if (const AFBBoxerCharacter* Opponent = OpponentFighter.Get())
@@ -144,24 +167,43 @@ void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt) 
 		OppLoc = Opponent->GetActorLocation();
 		OppHalf = FMath::Max(Opponent->GetStandingHalfHeight(), 1.f);
 	}
+	else if (TrainingBag)
+	{
+		OppLoc = TrainingBag->GetStrikeCenter();
+	}
 	const FVector OppFeet = OppLoc - FVector(0.f, 0.f, OppHalf);
+	const float FeetZ = FMath::Min(PlayerFeet.Z, OppFeet.Z);
+	const FVector Mid = (PlayerLoc + OppLoc) * 0.5f;
 
-	// OrbitYaw auto-aligns to "behind the player", so this vector points away from the opponent.
-	const FVector Back = FRotator(0.f, OrbitYaw, 0.f).Vector().GetSafeNormal2D();
-	const FVector Right = FVector::CrossProduct(FVector::UpVector, -Back).GetSafeNormal();
-	const float LeadSign = (Player->Stance == EFBStance::Southpaw) ? 1.f : -1.f;
+	FVector Line = (OppLoc - PlayerLoc).GetSafeNormal2D();
+	if (Line.IsNearlyZero())
+	{
+		Line = Player->GetActorForwardVector().GetSafeNormal2D();
+	}
+	const FVector Side = FRotator(0.f, OrbitYaw, 0.f).Vector().GetSafeNormal2D();
 
-	const float Separation = FVector::Dist2D(PlayerLoc, OppLoc);
-	const float CloseAlpha = 1.f - FMath::Clamp(Separation / FMath::Max(CloseSeparation, 1.f), 0.f, 1.f);
-	const float Distance = FollowDistance + ClosePullback * CloseAlpha;
-	const float PitchRad = FMath::DegreesToRadians(OrbitPitch);
+	if (TrainingBag)
+	{
+		// Close enough that a 46 cm bag is a bag. The ringside distance frames the whole ring.
+		const float FrameDistance = 340.f;
+		OutLocation = Mid + Side * FrameDistance;
+		OutLocation.Z = FeetZ + 155.f + FMath::Max(0.f, OrbitPitch) * 4.f;
+		OutLookAt = FVector(Mid.X, Mid.Y, FeetZ + 110.f);
+		return;
+	}
 
-	OutLocation = PlayerLoc + Back * Distance + Right * (LeadSign * LeadSideOffset);
-	OutLocation.Z = PlayerFeet.Z + (PlayerHalf * 2.f) * ChestHeightFraction + FMath::Sin(PitchRad) * Distance * 0.45f;
-	OutLocation.Z = FMath::Max(OutLocation.Z, PlayerFeet.Z + 90.f);
+	const float HalfTan = FMath::Tan(FMath::DegreesToRadians(FMath::Max(FightFOV, 45.f) * 0.5f));
+	const float Radius = (RingHalfExtent / FMath::Max(HalfTan, 0.25f)) + RingHalfExtent * 0.35f + OutsideMargin;
+	const float Along = FMath::Clamp(FVector::DotProduct(Mid, Line), -DollyLimit, DollyLimit);
 
-	OutLookAt = FVector(OppLoc.X, OppLoc.Y, OppFeet.Z + (OppHalf * 2.f) * LookAtHeightFraction);
-	OutLookAt.Z -= FMath::Sin(PitchRad) * 24.f;
+	OutLocation = Side * Radius + Line * (Along * DollyFollow);
+	OutLocation.Z = FeetZ + HeightAboveFeet + FMath::Max(0.f, OrbitPitch) * 6.f;
+
+	const FVector RingCenter(0.f, 0.f, FeetZ);
+	OutLookAt = FVector(
+		FMath::Lerp(RingCenter.X, Mid.X, 0.65f),
+		FMath::Lerp(RingCenter.Y, Mid.Y, 0.65f),
+		FeetZ + (PlayerHalf * 2.f) * LookHeightFraction);
 }
 
 void AFBBroadcastCamera::SnapToFrame()
@@ -173,9 +215,38 @@ void AFBBroadcastCamera::SnapToFrame()
 	SetActorRotation(UKismetMathLibrary::FindLookAtRotation(Location, LookAt));
 }
 
+void AFBBroadcastCamera::SetRefereeView(FVector EyeLocation, FVector LookAtLocation)
+{
+	bRefereeView = true;
+	RefereeEye = EyeLocation;
+	RefereeLook = LookAtLocation;
+	if (Camera)
+	{
+		Camera->SetFieldOfView(42.f);
+	}
+}
+
+void AFBBroadcastCamera::ClearRefereeView()
+{
+	bRefereeView = false;
+	if (Camera)
+	{
+		Camera->SetFieldOfView(FightFOV);
+	}
+}
+
 void AFBBroadcastCamera::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (bRefereeView)
+	{
+		const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), RefereeEye, DeltaSeconds, 6.f);
+		SetActorLocation(NewLocation);
+		const FRotator DesiredLook = UKismetMathLibrary::FindLookAtRotation(NewLocation, RefereeLook);
+		SetActorRotation(FMath::RInterpTo(GetActorRotation(), DesiredLook, DeltaSeconds, 8.f));
+		return;
+	}
 
 	if (!PlayerFighter.IsValid())
 	{
@@ -184,6 +255,32 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 	if (!PlayerFighter.IsValid())
 	{
 		return;
+	}
+
+	if (!OpponentFighter.IsValid() && !bTrainingFramed)
+	{
+		for (TActorIterator<AFBHeavyBag> It(GetWorld()); It; ++It)
+		{
+			if (!IsValid(*It) || !It->IsActiveBag())
+			{
+				continue;
+			}
+			const FVector Line = (It->GetStrikeCenter() - PlayerFighter->GetActorLocation()).GetSafeNormal2D();
+			if (!Line.IsNearlyZero())
+			{
+				FVector Side(-Line.Y, Line.X, 0.f);
+				if (FVector::DotProduct(Side, FVector(0.f, -1.f, 0.f)) < 0.f)
+				{
+					Side *= -1.f;
+				}
+				OrbitYaw = Side.Rotation().Yaw;
+				OrbitPitch = 10.f;
+			}
+			bTrainingFramed = true;
+			bHasFramed = true;
+			SnapToFrame();
+			break;
+		}
 	}
 
 	const bool bHasOrbitInput = !PendingOrbitInput.IsNearlyZero(KINDA_SMALL_NUMBER);
@@ -201,12 +298,18 @@ void AFBBroadcastCamera::Tick(float DeltaSeconds)
 
 	if (bAutoAlignWhenIdle && OrbitInputHoldTime <= 0.f && OpponentFighter.IsValid())
 	{
-		const FVector ToOpp = (OpponentFighter->GetActorLocation() - PlayerFighter->GetActorLocation()).GetSafeNormal2D();
-		if (!ToOpp.IsNearlyZero())
+		const FVector Line = (OpponentFighter->GetActorLocation() - PlayerFighter->GetActorLocation()).GetSafeNormal2D();
+		if (!Line.IsNearlyZero())
 		{
-			const float DesiredYaw = ToOpp.Rotation().Yaw + 180.f;
+			FVector DesiredSide(-Line.Y, Line.X, 0.f);
+			const FVector CurrentSide = FRotator(0.f, OrbitYaw, 0.f).Vector();
+			if (FVector::DotProduct(CurrentSide, DesiredSide) < 0.f)
+			{
+				DesiredSide *= -1.f;
+			}
+			const float DesiredYaw = DesiredSide.Rotation().Yaw;
 			const float DeltaYaw = FMath::FindDeltaAngleDegrees(OrbitYaw, DesiredYaw);
-			const float MaxStep = AutoAlignSpeed * 60.f * DeltaSeconds;
+			const float MaxStep = AutoAlignSpeed * 40.f * DeltaSeconds;
 			OrbitYaw += FMath::Clamp(DeltaYaw, -MaxStep, MaxStep);
 		}
 	}
