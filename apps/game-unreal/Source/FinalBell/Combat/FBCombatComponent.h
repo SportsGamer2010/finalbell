@@ -54,6 +54,48 @@ public:
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
 	bool IsPowerShot() const { return bActivePowerShot; }
 
+	float GetPhaseTimeRemaining() const { return PhaseTimeRemaining; }
+	float GetPunchRegenDelay() const { return PunchRegenDelay; }
+	float GetRecoverableCeiling() const { return FMath::Max(10.f, MaxBurstEnergy - Fatigue); }
+	int32 GetActiveAttackInstanceId() const { return ActiveAttackInstanceId; }
+	float GetAttackCost(EFBAttackId Attack) const { return CostFor(Attack); }
+
+	bool IsComboBufferOpen() const
+	{
+		return IsComboBufferWindow(AttackPhase, PhaseTimeRemaining, ComboBufferSeconds, bHasBufferedAttack);
+	}
+
+	/** Energy returns only while idle, guard down, and the post-punch delay has run out. */
+	static bool EnergyRegenEligible(EFBAttackPhase Phase, EFBGuardState Guard, float PunchRegenDelay)
+	{
+		return Phase == EFBAttackPhase::Idle && Guard == EFBGuardState::Open && PunchRegenDelay <= 0.f;
+	}
+
+	static float AdvanceRecoverableEnergy(float Energy, float Ceiling, float RegenPerSecond, float DeltaSeconds, bool bEligible)
+	{
+		if (!bEligible || DeltaSeconds <= 0.f)
+		{
+			return Energy;
+		}
+		return FMath::Min(Ceiling, Energy + RegenPerSecond * DeltaSeconds);
+	}
+
+	/** A punch that omits the guard flag must not drop a guard that is still held. */
+	static bool IntentUpdatesGuard(const FFBCombatIntent& Intent)
+	{
+		return !(Intent.Attack != EFBAttackId::None && !Intent.bGuardHeld);
+	}
+
+	static bool InComboBufferTail(EFBAttackPhase Phase, float TimeRemaining, float BufferSeconds)
+	{
+		return Phase == EFBAttackPhase::Recovery && TimeRemaining > 0.f && TimeRemaining <= BufferSeconds;
+	}
+
+	static bool IsComboBufferWindow(EFBAttackPhase Phase, float TimeRemaining, float BufferSeconds, bool bAlreadyBuffered)
+	{
+		return InComboBufferTail(Phase, TimeRemaining, BufferSeconds) && !bAlreadyBuffered;
+	}
+
 	UPROPERTY(BlueprintAssignable, Category = "FinalBell|Combat")
 	FFBOnImpactResolved OnImpactResolved;
 
@@ -181,6 +223,7 @@ protected:
 	bool bActivePrecisionCone = false;
 	bool bResolvedThisAttack = false;
 	int32 NextAttackInstanceId = 1;
+	int32 ActiveAttackInstanceId = 0;
 	TSet<int32> ResolvedAttackInstanceIds;
 	/** Defenders already damaged by this attack. One hit per attacker, attack, and defender. */
 	TSet<int32> DamagedDefendersThisAttack;

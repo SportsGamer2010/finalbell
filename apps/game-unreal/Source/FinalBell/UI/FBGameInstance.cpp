@@ -86,10 +86,11 @@ bool UFBGameInstance::ConsumeCareerFighterSelect()
 	return bCareer;
 }
 
-void UFBGameInstance::SetPendingBout(const FFBFighterRecord& PlayerBuild, const FFBFighterRecord& OpponentBuild)
+void UFBGameInstance::SetPendingBout(const FFBFighterRecord& PlayerBuild, const FFBFighterRecord& OpponentBuild, EFBAIDifficulty Difficulty)
 {
 	PendingPlayer = PlayerBuild;
 	PendingOpponent = OpponentBuild;
+	PendingDifficulty = FFBTactical::SanitizeDifficulty(Difficulty);
 	bPendingBout = true;
 }
 
@@ -97,6 +98,7 @@ void UFBGameInstance::ClearPendingBout()
 {
 	PendingPlayer = FFBFighterRecord();
 	PendingOpponent = FFBFighterRecord();
+	PendingDifficulty = EFBAIDifficulty::Club;
 	bPendingBout = false;
 }
 

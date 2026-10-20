@@ -29,7 +29,7 @@ namespace
 	}
 }
 
-FFBStylePolicy FFBStylePolicy::ForStyle(const FString& Style)
+static FFBStylePolicy BuildStyle(const FString& Style)
 {
 	auto Is = [&Style](const TCHAR* Name)
 	{
@@ -343,6 +343,88 @@ FFBStylePolicy FFBStylePolicy::ForStyle(const FString& Style)
 		return Policy;
 	}
 	return Mix();
+}
+
+namespace
+{
+	void ApplyTacticalProfile(const FString& Style, FFBStylePolicy& Policy)
+	{
+		Policy.Name = Style.IsEmpty() ? TEXT("Custom") : Style;
+		auto Is = [&Style](const TCHAR* Name)
+		{
+			return Style.Equals(Name, ESearchCase::IgnoreCase);
+		};
+		if (Is(TEXT("Out-boxer")) || Is(TEXT("Jab technician")) || Is(TEXT("Speedster")))
+		{
+			Policy.PreferredPunches = 1.3f;
+			Policy.Draw = 0.22f;
+			Policy.CutRetreat = 0.05f;
+			Policy.EntryGuard = 0.32f;
+			Policy.AnglePreference = 0.78f;
+			Policy.Chase = FMath::Min(Policy.Chase, 0.72f);
+		}
+		else if (Is(TEXT("Swarmer")) || Is(TEXT("In-fighter")) || Is(TEXT("Inside fighter")) || Is(TEXT("Body puncher")))
+		{
+			Policy.PreferredPunches = 2.4f;
+			Policy.CutRetreat = 1.f;
+			Policy.EntryGuard = 0.74f;
+			Policy.Draw = 0.f;
+			Policy.AnglePreference = 0.22f;
+		}
+		else if (Is(TEXT("Counterpuncher")) || Is(TEXT("Slick boxer")))
+		{
+			Policy.PreferredPunches = 1.8f;
+			Policy.Draw = 0.84f;
+			Policy.EntryGuard = 0.42f;
+			Policy.CutRetreat = 0.12f;
+			Policy.AnglePreference = 0.70f;
+		}
+		else if (Is(TEXT("Slugger")) || Is(TEXT("Power puncher")))
+		{
+			Policy.PreferredPunches = 1.15f;
+			Policy.EntryGuard = 0.18f;
+			Policy.CutRetreat = 0.28f;
+			Policy.Draw = 0.05f;
+			Policy.AnglePreference = 0.12f;
+		}
+		else if (Is(TEXT("High guard")) || Is(TEXT("Peek-a-boo")))
+		{
+			Policy.PreferredPunches = 1.7f;
+			Policy.EntryGuard = 0.92f;
+			Policy.Draw = 0.12f;
+			Policy.CutRetreat = 0.40f;
+			Policy.AnglePreference = 0.20f;
+		}
+		else if (Is(TEXT("Brawler")))
+		{
+			Policy.PreferredPunches = 2.1f;
+			Policy.EntryGuard = 0.38f;
+			Policy.CutRetreat = 0.72f;
+			Policy.AnglePreference = 0.18f;
+		}
+		else if (Is(TEXT("Southpaw")))
+		{
+			Policy.PreferredPunches = 1.8f;
+			Policy.EntryGuard = 0.30f;
+			Policy.CutRetreat = 0.22f;
+			Policy.AnglePreference = 0.55f;
+		}
+		else
+		{
+			Policy.PreferredPunches = 1.8f;
+			Policy.EntryGuard = 0.35f;
+			Policy.Draw = 0.15f;
+			Policy.CutRetreat = 0.30f;
+			Policy.AnglePreference = 0.40f;
+		}
+	}
+}
+
+FFBStylePolicy FFBStylePolicy::ForStyle(const FString& Style)
+{
+	FFBStylePolicy Policy = BuildStyle(Style);
+	ApplyTacticalProfile(Style, Policy);
+	return Policy;
 }
 
 bool FFBStylePolicy::FindRingCenter(const UWorld* World, FVector& OutCenter)

@@ -415,5 +415,20 @@ Closing the menu or pause now sets Game Only, focuses the game viewport, and add
 
 - Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (10.87 s) and linked `UnrealEditor-FinalBell.dll`. The first pass failed to compile because a local named `Owner` hid `AActor::Owner`. Live Coding did not block the link.
 
+### 2026-10-20 — Tactical boxing AI
+
+The opponent in sparring and career no longer treats every step as a full shove or throws on a fixed timer. `AFBBoxerAIController` keeps stick strength, decides on a 0.10–0.20s clock, and moves every frame. States are Measure, Approach, Exchange, Defend, Recover, EscapeRopes, Hurt, and Inactive. A seen punch, the ropes, or an empty tank can leave early. Ordinary changes wait out a dwell. Recover uses a lower enter line than its leave line, and the leave line stays under the fatigue ceiling. Guard comes back down with a no-attack intent so energy can refill. Combos use the existing 125 ms recovery buffer. Rejected punches do not advance the plan.
+
+Difficulty is Novice, Club, or Expert on the fighter screen (`AI: CLUB` by default). It is saved with the other player settings and sent with the bout. Rematch keeps it. It does not change the 600-point builds. How to tune it, and `fb.DebugAI`, are in `docs/BoxingAI.md`. Decision D-030.
+
+FB-ENH-01 through FB-ENH-06 were not part of this pass and are not verified. The balance script checks the 600-point rule. It does not prove the fights are balanced.
+
+- PIE was not run. No bout was played. The pad was not watched.
+
+- `python Tools/AI/scripts/check_fighter_balance.py` exited 0: CompetitiveFair, 19 ratings, budget 600, 16 styled division fighters.
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (8.58 s) and linked `UnrealEditor-FinalBell.dll`. Live Coding did not block it. An earlier pass failed on compile errors in the new controller and was fixed before this link.
+- Automation: `UnrealEditor-Cmd` `-ExecCmds="Automation RunTests FinalBell.AI"` `-NullRHI` reported **6 tests performed**, all Success: FootworkIntensity, Hysteresis, Cues, GuardRelease, ExchangeAndCleanup, Difficulty. Exit status 0. These tests use a fixed seed and explicit time. They are not a claim of physics determinism.
+
+
 
 

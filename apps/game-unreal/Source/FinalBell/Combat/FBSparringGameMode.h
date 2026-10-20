@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "Combat/FBCombatTypes.h"
+#include "Combat/FBTacticalTypes.h"
 #include "FBSparringGameMode.generated.h"
 
 class AFBBoxerCharacter;
@@ -93,6 +94,13 @@ public:
 	/** The controller that confirmed the pair. Their pawn receives the player build. */
 	void NoteBoutRequester(AController* Requester);
 
+	/** Novice, Club, or Expert. Rematch keeps the value from the confirmed bout. */
+	void SetAiDifficulty(EFBAIDifficulty Difficulty);
+	EFBAIDifficulty GetAiDifficulty() const { return AiDifficulty; }
+
+	/** Drops plans and cues on the AI when the bell rings. Difficulty stays. */
+	void ResetAiTactics(const TCHAR* Reason);
+
 	/**
 	 * Why: spending the last of the gas tank drops a fighter. The client does not decide this.
 	 * What: starts the referee's count if the bout is live and this fighter is not already down.
@@ -153,6 +161,8 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Session")
 	EFBPlayMode ActivePlayMode = EFBPlayMode::Unset;
+
+	EFBAIDifficulty AiDifficulty = EFBAIDifficulty::Club;
 
 	float PhaseTimeRemaining = 0.f;
 	bool bResultFinalized = false;

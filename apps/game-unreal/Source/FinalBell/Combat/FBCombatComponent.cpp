@@ -126,15 +126,17 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	{
 		PunchRegenDelay = FMath::Max(0.f, PunchRegenDelay - DeltaTime);
 	}
-	if (AttackPhase == EFBAttackPhase::Idle && GuardState == EFBGuardState::Open && PunchRegenDelay <= 0.f)
+	float Regen = EnergyRecoverPerSecond;
+	if (const AFBBoxerCharacter* RegenBoxer = Cast<AFBBoxerCharacter>(GetOwner()))
 	{
-		float Regen = EnergyRecoverPerSecond;
-		if (const AFBBoxerCharacter* RegenBoxer = Cast<AFBBoxerCharacter>(GetOwner()))
-		{
-			Regen *= RegenBoxer->GetCombatDerived().StaminaRegen;
-		}
-		BurstEnergy = FMath::Min(RecoverableCeiling, BurstEnergy + Regen * RecoveryScale * DeltaTime);
+		Regen *= RegenBoxer->GetCombatDerived().StaminaRegen;
 	}
+	BurstEnergy = AdvanceRecoverableEnergy(
+		BurstEnergy,
+		RecoverableCeiling,
+		Regen * RecoveryScale,
+		DeltaTime,
+		EnergyRegenEligible(AttackPhase, GuardState, PunchRegenDelay));
 }
 
 bool UFBCombatComponent::CanAfford(EFBAttackId Attack) const
@@ -179,6 +181,7 @@ float UFBCombatComponent::DamageFor(EFBAttackId Attack) const
 void UFBCombatComponent::BeginAttack(EFBAttackId Attack, AActor* Opponent, bool bBodyShot, bool bPowerShot)
 {
 	ActiveAttack = Attack;
+	ActiveAttackInstanceId = NextAttackInstanceId++;
 	bActiveBodyShot = bBodyShot;
 	bActivePowerShot = bPowerShot;
 	PendingOpponent = Opponent;
@@ -228,6 +231,7 @@ void UFBCombatComponent::AbortAttack()
 		return;
 	}
 	ActiveAttack = EFBAttackId::None;
+	ActiveAttackInstanceId = 0;
 	bActiveBodyShot = false;
 	bActivePowerShot = false;
 	bResolvedThisAttack = true;
@@ -287,7 +291,7 @@ void UFBCombatComponent::RememberDesiredDefense(const FFBCombatIntent& Intent)
 	bDesiredPower = Intent.bPowerPunch;
 	// A punch intent must not drop a guard the player is still holding.
 	// The release arrives as its own intent with no attack.
-	if (Intent.Attack != EFBAttackId::None && !Intent.bGuardHeld)
+	if (!IntentUpdatesGuard(Intent))
 	{
 		return;
 	}
@@ -453,9 +457,7 @@ EFBIntentResult UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent
 		return EFBIntentResult::RejectedBreak;
 	}
 
-	if (AttackPhase == EFBAttackPhase::Recovery
-		&& PhaseTimeRemaining > 0.f
-		&& PhaseTimeRemaining <= ComboBufferSeconds)
+	if (InComboBufferTail(AttackPhase, PhaseTimeRemaining, ComboBufferSeconds))
 	{
 		if (bHasBufferedAttack)
 		{
@@ -501,6 +503,7 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 	const float ShotScale = Exposure * OutputScale * HandPower;
 
 	FFBImpactEvent Impact;
+	Impact.AttackInstanceId = ActiveAttackInstanceId;
 	Impact.Attack = ActiveAttack;
 	Impact.AttackerStaminaCost = CostFor(ActiveAttack);
 	Impact.Region = bActiveBodyShot ? EFBHitRegion::Body : EFBHitRegion::Head;

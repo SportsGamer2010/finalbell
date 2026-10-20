@@ -1,5 +1,6 @@
 ﻿#include "Combat/FBSparringGameMode.h"
 #include "Combat/FBBoxerCharacter.h"
+#include "Combat/FBBoxerAIController.h"
 #include "Combat/FBCombatComponent.h"
 #include "Combat/FBStylePolicy.h"
 #include "Ring/FBRingBounds.h"
@@ -354,6 +355,39 @@ void AFBSparringGameMode::DestroyAllAiOpponents()
 void AFBSparringGameMode::NoteBoutRequester(AController* Requester)
 {
 	BoutRequester = Requester;
+}
+
+void AFBSparringGameMode::SetAiDifficulty(EFBAIDifficulty Difficulty)
+{
+	AiDifficulty = FFBTactical::SanitizeDifficulty(Difficulty);
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	for (TActorIterator<AFBBoxerAIController> It(World); It; ++It)
+	{
+		if (*It)
+		{
+			(*It)->SetDifficulty(AiDifficulty);
+		}
+	}
+}
+
+void AFBSparringGameMode::ResetAiTactics(const TCHAR* Reason)
+{
+	if (ActivePlayMode != EFBPlayMode::VersusAI && ActivePlayMode != EFBPlayMode::Career)
+	{
+		return;
+	}
+	for (TActorIterator<AFBBoxerAIController> It(GetWorld()); It; ++It)
+	{
+		if (*It)
+		{
+			(*It)->SetDifficulty(AiDifficulty);
+			(*It)->ResetTactics(Reason);
+		}
+	}
 }
 
 void AFBSparringGameMode::BenchExtraHumansForSoloAi()
@@ -841,6 +875,7 @@ void AFBSparringGameMode::StartBout()
 	{
 		UE_LOG(LogTemp, Log, TEXT("Final Bell: 3:00 bout started. mode=%d."), (int32)ActivePlayMode);
 	}
+	ResetAiTactics(TEXT("Bell"));
 	PushBoutState();
 }
 

@@ -547,6 +547,7 @@ void AFBSparringPlayerController::ShowFighterSelect()
 		SelectReveal = 0.f;
 		if (const UFBPlayerSettingsSave* Saved = UFBPlayerSettingsSave::LoadOrCreate())
 		{
+			SelectDifficulty = FFBTactical::SanitizeDifficulty(Saved->AIDifficulty);
 			if (Saved->bReducedMotion)
 			{
 				SelectReveal = 1.f;
@@ -672,10 +673,10 @@ void AFBSparringPlayerController::ConfirmCompetitiveBout()
 	bBoutStartPending = true;
 	SelectStatus = TEXT("Starting the bout.");
 	RebuildFighterSelect();
-	ServerStartCompetitiveBout(ReadyPlayer, Opponent, bCareerSelect ? EFBPlayMode::Career : EFBPlayMode::VersusAI);
+	ServerStartCompetitiveBout(ReadyPlayer, Opponent, bCareerSelect ? EFBPlayMode::Career : EFBPlayMode::VersusAI, SelectDifficulty);
 }
 
-void AFBSparringPlayerController::ServerStartCompetitiveBout_Implementation(FFBFighterRecord PlayerBuild, FFBFighterRecord OpponentBuild, EFBPlayMode RequestedMode)
+void AFBSparringPlayerController::ServerStartCompetitiveBout_Implementation(FFBFighterRecord PlayerBuild, FFBFighterRecord OpponentBuild, EFBPlayMode RequestedMode, EFBAIDifficulty Difficulty)
 {
 	if (!HasAuthority())
 	{
@@ -728,9 +729,10 @@ void AFBSparringPlayerController::ServerStartCompetitiveBout_Implementation(FFBF
 		OpponentBuild = *Found;
 	}
 	const EFBPlayMode StartMode = bCareer ? EFBPlayMode::Career : EFBPlayMode::VersusAI;
+	Difficulty = FFBTactical::SanitizeDifficulty(Difficulty);
 	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
 	{
-		FrontEnd->SetPendingBout(PlayerBuild, OpponentBuild);
+		FrontEnd->SetPendingBout(PlayerBuild, OpponentBuild, Difficulty);
 	}
 	if (UGameInstance* GI = GetGameInstance())
 	{
@@ -746,6 +748,7 @@ void AFBSparringPlayerController::ServerStartCompetitiveBout_Implementation(FFBF
 		return;
 	}
 	Mode->NoteBoutRequester(this);
+	Mode->SetAiDifficulty(Difficulty);
 	Mode->SetAwaitingFighterConfirm(false);
 	Mode->ApplyPlayMode(StartMode);
 	FString Why;
@@ -1348,6 +1351,29 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		RebuildFighterSelect();
 		return FReply::Handled();
 	});
+	const TCHAR* DifficultyName = TEXT("CLUB");
+	if (SelectDifficulty == EFBAIDifficulty::Novice)
+	{
+		DifficultyName = TEXT("NOVICE");
+	}
+	else if (SelectDifficulty == EFBAIDifficulty::Expert)
+	{
+		DifficultyName = TEXT("EXPERT");
+	}
+	TSharedRef<SWidget> DifficultyRow = ActionRow(FString::Printf(TEXT("AI: %s"), DifficultyName), [this]()
+	{
+		const uint8 Next = static_cast<uint8>(SelectDifficulty) + 1;
+		SelectDifficulty = Next > static_cast<uint8>(EFBAIDifficulty::Expert)
+			? EFBAIDifficulty::Novice
+			: static_cast<EFBAIDifficulty>(Next);
+		if (UFBPlayerSettingsSave* Saved = UFBPlayerSettingsSave::LoadOrCreate())
+		{
+			Saved->AIDifficulty = SelectDifficulty;
+			Saved->WriteToDisk();
+		}
+		RebuildFighterSelect();
+		return FReply::Handled();
+	});
 	StampSide(2);
 
 	auto AddIdentity = [&](TSharedRef<SVerticalBox> Body, const FFBFighterRecord& Fighter)
@@ -1559,6 +1585,10 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			.AutoWrapText(true)
 		];
 	}
+	ActionBody->AddSlot().AutoHeight().Padding(8.f, 2.f, 8.f, 4.f)
+	[
+		DifficultyRow
+	];
 	ActionBody->AddSlot().AutoHeight()
 	[
 		SNew(SHorizontalBox)

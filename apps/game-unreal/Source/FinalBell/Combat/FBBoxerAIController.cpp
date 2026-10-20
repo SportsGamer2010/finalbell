@@ -1,11 +1,22 @@
 #include "Combat/FBBoxerAIController.h"
+
 #include "Combat/FBBoxerCharacter.h"
-#include "Math/RotationMatrix.h"
 #include "Combat/FBCombatComponent.h"
 #include "Combat/FBFighterBalance.h"
 #include "Combat/FBSparringGameMode.h"
 #include "Combat/FBStylePolicy.h"
+#include "Combat/FBTacticalBrain.h"
+#include "Ring/FBRingBounds.h"
+#include "Components/CapsuleComponent.h"
+#include "Engine/Engine.h"
 #include "EngineUtils.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<int32> CVarDebugAI(
+	TEXT("fb.DebugAI"),
+	0,
+	TEXT("1 prints tactical AI state, style, difficulty, energy, range, scores, and the intent result. 0 is silent. This is not the bout HUD."));
 
 namespace
 {
@@ -36,15 +47,28 @@ namespace
 		}
 		return Fallback;
 	}
-}
 
-namespace
-{
 	int32 ReadRating(const AFBBoxerCharacter* Boxer, EFBAttributeId Id)
 	{
 		const TArray<int32>& Ratings = Boxer->GetFighterRecord().Ratings;
 		const int32 Index = static_cast<int32>(Id);
 		return Ratings.IsValidIndex(Index) ? Ratings[Index] : FFBFighterBalance::RatingMin;
+	}
+
+	void FillCosts(const UFBCombatComponent* Combat, FFBTacticalView& View)
+	{
+		const EFBAttackId Ids[] = {
+			EFBAttackId::Jab, EFBAttackId::Cross, EFBAttackId::LeadHook,
+			EFBAttackId::RearHook, EFBAttackId::LeadUppercut, EFBAttackId::RearUppercut
+		};
+		for (EFBAttackId Id : Ids)
+		{
+			const int32 Index = static_cast<int32>(Id);
+			if (Combat && Index >= 0 && Index < UE_ARRAY_COUNT(View.AttackCost))
+			{
+				View.AttackCost[Index] = Combat->GetAttackCost(Id);
+			}
+		}
 	}
 }
 
@@ -54,237 +78,242 @@ AFBBoxerAIController::AFBBoxerAIController()
 	bWantsPlayerState = false;
 }
 
+void AFBBoxerAIController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ResetTactics(TEXT("EndPlay"));
+	delete Brain;
+	Brain = nullptr;
+	Super::EndPlay(EndPlayReason);
+}
+
 void AFBBoxerAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 	NextSequence = 1;
-	ThinkDelay = 0.55f;
-	AnswerUntil = -1.f;
-	PrevOppPhase = EFBAttackPhase::Idle;
-	bRoundLatched = false;
-
+	if (!Brain)
+	{
+		Brain = new FFBTacticalBrain();
+	}
+	Brain->SetTuning(Tuning);
+	Brain->SetDifficulty(EFBAIDifficulty::Club);
 	if (const AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(InPawn))
 	{
 		const FString Style = Boxer->GetFighterRecord().Style;
+		const int32 Seed = static_cast<int32>(GetTypeHash(Style.IsEmpty() ? Boxer->GetFighterDisplayName() : Style) & 0x7fffffff);
+		if (Brain)
+		{
+			Brain->SetSeed(Seed == 0 ? 1 : Seed);
+			Brain->SetStyle(FFBStylePolicy::ForStyle(Style), Boxer->Stance);
+			Brain->SetTuning(Tuning);
+		}
 		UE_LOG(LogTemp, Log, TEXT("FinalBell AI %s fights as %s."),
 			*Boxer->GetFighterDisplayName(),
 			Style.IsEmpty() ? TEXT("a mix") : *Style);
 	}
+	PushDifficultyFromMode();
+	ResetTactics(TEXT("Possess"));
 }
 
-void AFBBoxerAIController::Offer(
-	AFBBoxerCharacter* Self,
-	AFBBoxerCharacter* Opponent,
-	EFBAttackId Attack,
-	bool bGuardHeld,
-	EFBGuardState Guard,
-	bool bBody,
-	bool bPower,
-	EFBRingAction Action,
-	FVector2D MoveAxis)
+void AFBBoxerAIController::OnUnPossess()
+{
+	ResetTactics(TEXT("Unpossess"));
+	Super::OnUnPossess();
+}
+
+void AFBBoxerAIController::SetDifficulty(EFBAIDifficulty Difficulty)
+{
+	if (!Brain)
+	{
+		Brain = new FFBTacticalBrain();
+		Brain->SetSeed(1);
+	}
+	Brain->SetTuning(Tuning);
+	Brain->SetDifficulty(Difficulty);
+}
+
+void AFBBoxerAIController::PushDifficultyFromMode()
+{
+	const UWorld* World = GetWorld();
+	const AFBSparringGameMode* Mode = World ? World->GetAuthGameMode<AFBSparringGameMode>() : nullptr;
+	SetDifficulty(Mode ? Mode->GetAiDifficulty() : EFBAIDifficulty::Club);
+}
+
+void AFBBoxerAIController::ResetTactics(const TCHAR* Reason)
+{
+	UnbindAll();
+	DecisionLeft = 0.f;
+	FailTime = 0.f;
+	LastMoveBucket = INDEX_NONE;
+	SmoothedMove = FVector::ZeroVector;
+	MoveGoal = FVector::ZeroVector;
+	bRoundLatched = false;
+	bDownLatched = false;
+	LastIntentText = TEXT("none");
+	if (Brain)
+	{
+		const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+		Brain->Reset(Reason, Now);
+		Brain->SetTuning(Tuning);
+	}
+	if (const AFBBoxerCharacter* Self = Cast<AFBBoxerCharacter>(GetPawn()))
+	{
+		LastLocation = Self->GetActorLocation();
+	}
+}
+
+void AFBBoxerAIController::UnbindAll()
+{
+	if (UFBCombatComponent* Combat = BoundOpponentCombat.Get())
+	{
+		Combat->OnAttackPhaseChanged.RemoveDynamic(this, &AFBBoxerAIController::HandleOpponentPhase);
+		Combat->OnImpactResolved.RemoveDynamic(this, &AFBBoxerAIController::HandleOpponentImpact);
+	}
+	if (UFBCombatComponent* Combat = BoundSelfCombat.Get())
+	{
+		Combat->OnImpactResolved.RemoveDynamic(this, &AFBBoxerAIController::HandleOwnImpact);
+	}
+	BoundOpponent = nullptr;
+	BoundOpponentCombat = nullptr;
+	BoundSelfCombat = nullptr;
+}
+
+void AFBBoxerAIController::BindPair(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent)
+{
+	if (!Self || !Opponent || !Brain)
+	{
+		return;
+	}
+	if (BoundOpponent.Get() == Opponent && BoundSelfCombat.Get() == Self->GetCombatComponent())
+	{
+		return;
+	}
+	UnbindAll();
+	Brain->Reset(TEXT("Opponent"), GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f);
+	Brain->SetStyle(FFBStylePolicy::ForStyle(Self->GetFighterRecord().Style), Self->Stance);
+	BoundOpponent = Opponent;
+	if (UFBCombatComponent* OppCombat = Opponent->GetCombatComponent())
+	{
+		BoundOpponentCombat = OppCombat;
+		OppCombat->OnAttackPhaseChanged.AddDynamic(this, &AFBBoxerAIController::HandleOpponentPhase);
+		OppCombat->OnImpactResolved.AddDynamic(this, &AFBBoxerAIController::HandleOpponentImpact);
+	}
+	if (UFBCombatComponent* SelfCombat = Self->GetCombatComponent())
+	{
+		BoundSelfCombat = SelfCombat;
+		SelfCombat->OnImpactResolved.AddDynamic(this, &AFBBoxerAIController::HandleOwnImpact);
+	}
+}
+
+void AFBBoxerAIController::HandleOpponentPhase(EFBAttackPhase Phase)
+{
+	if (!Brain || Phase != EFBAttackPhase::Startup)
+	{
+		return;
+	}
+	AFBBoxerCharacter* Self = Cast<AFBBoxerCharacter>(GetPawn());
+	AFBBoxerCharacter* Opponent = BoundOpponent.Get();
+	UFBCombatComponent* OppCombat = BoundOpponentCombat.Get();
+	if (!Self || !Opponent || !OppCombat)
+	{
+		return;
+	}
+	const FVector To = (Opponent->GetActorLocation() - Self->GetActorLocation()).GetSafeNormal2D();
+	const float Facing = FVector::DotProduct(Self->GetActorForwardVector().GetSafeNormal2D(), To);
+	const float Distance = FVector::Dist2D(Self->GetActorLocation(), Opponent->GetActorLocation());
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Brain->NoteAttackCue(
+		Opponent->GetUniqueID(),
+		OppCombat->GetActiveAttackInstanceId(),
+		OppCombat->GetActiveAttack(),
+		OppCombat->IsBodyShot(),
+		OppCombat->IsPowerShot(),
+		Now,
+		Facing,
+		Distance);
+}
+
+void AFBBoxerAIController::HandleOpponentImpact(const FFBImpactEvent& Impact)
+{
+	AFBBoxerCharacter* Opponent = BoundOpponent.Get();
+	if (!Brain || !Opponent)
+	{
+		return;
+	}
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Brain->NoteImpact(Opponent->GetUniqueID(), Impact.AttackInstanceId, Impact, Now);
+}
+
+void AFBBoxerAIController::HandleOwnImpact(const FFBImpactEvent& Impact)
+{
+	if (!Brain)
+	{
+		return;
+	}
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Brain->NoteOwnImpact(Impact, Now);
+}
+
+EFBIntentResult AFBBoxerAIController::Submit(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBActionChoice& Action)
 {
 	UFBCombatComponent* Combat = Self ? Self->GetCombatComponent() : nullptr;
-	if (!Self || !Combat || !Self->HasAuthority() || Self->IsKnockedDown())
+	if (!Self || !Combat || !Brain || !Action.bSubmit || !Self->HasAuthority() || Self->IsKnockedDown())
 	{
-		return;
+		return EFBIntentResult::RejectedPhase;
 	}
-	if (Opponent && Opponent->IsKnockedDown() && Attack != EFBAttackId::None)
+	if (Opponent && Opponent->IsKnockedDown() && Action.Attack != EFBAttackId::None)
 	{
-		return;
+		return EFBIntentResult::RejectedDown;
 	}
-
 	FFBCombatIntent Intent;
 	Intent.Sequence = NextSequence++;
 	Intent.ClientTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
-	Intent.Attack = Attack;
-	Intent.bGuardHeld = bGuardHeld;
-	Intent.Guard = Guard;
+	Intent.Attack = Action.Attack;
+	Intent.bGuardHeld = Action.bGuardHeld;
+	Intent.Guard = Action.Guard;
 	Intent.SchemaVersion = TEXT("1.0.0");
-	Intent.bBodyTarget = bBody;
-	Intent.bPowerPunch = bPower;
-	Intent.RingAction = Action;
-	Intent.MoveAxis = MoveAxis;
-	if (Attack != EFBAttackId::None)
+	Intent.bBodyTarget = Action.bBody;
+	Intent.bPowerPunch = Action.bPower;
+	Intent.RingAction = Action.RingAction;
+	Intent.MoveAxis = Action.MoveAxis;
+	if (Action.Attack != EFBAttackId::None)
 	{
 		const float Accuracy = FFBFighterBalance::Normalized(ReadRating(Self, EFBAttributeId::Accuracy));
-		Intent.bPrecisionCone = FMath::FRand() < FMath::Lerp(0.12f, 0.82f, Accuracy);
+		const int32 Roll = static_cast<int32>(GetTypeHash(Intent.Sequence) % 100);
+		const int32 Need = FMath::RoundToInt(FMath::Lerp(Brain->GetProfile().ErrorRate < 0.2f ? 20.f : 12.f, Brain->GetProfile().ErrorRate < 0.2f ? 70.f : 55.f, Accuracy));
+		Intent.bPrecisionCone = Roll < Need;
 	}
-	Combat->ServerTryProcessIntent(Intent, Opponent);
+	const EFBIntentResult Result = Combat->ServerTryProcessIntent(Intent, Opponent);
+	Brain->NoteIntent(Result, Action.Kind);
+	LastIntentText = FString::Printf(TEXT("%s -> %d"), *Action.Label, static_cast<int32>(Result));
+	return Result;
 }
 
-void AFBBoxerAIController::StepFeet(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBStylePolicy& Policy) const
+void AFBBoxerAIController::ApplyFootwork(AFBBoxerCharacter* Self, const FVector& Desired, bool bScaleDown)
 {
-	if (!Self || !Opponent || Self->IsKnockedDown() || Self->IsInClinch())
+	if (!Self || Self->IsKnockedDown() || Self->IsInClinch())
 	{
 		return;
 	}
-
-	const FVector MyLoc = Self->GetActorLocation();
-	const FVector OppLoc = Opponent->GetActorLocation();
-	const FVector ToOpp = (OppLoc - MyLoc).GetSafeNormal2D();
-	if (ToOpp.IsNearlyZero())
+	FVector Direction = FVector::ZeroVector;
+	float Intensity = 0.f;
+	FFBTactical::SeparateFootwork(Desired, Direction, Intensity);
+	if (bScaleDown)
 	{
-		return;
+		Intensity *= Tuning.CommittedMoveScale;
 	}
-
-	if (Opponent->IsKnockedDown())
+	if (Intensity > 0.02f && !Direction.IsNearlyZero())
 	{
-		const float Dist = FVector::Dist2D(MyLoc, OppLoc);
-		if (Dist < 170.f)
-		{
-			Self->AddMovementInput(-ToOpp, 1.f);
-		}
-		return;
+		Self->AddMovementInput(Direction, Intensity);
 	}
-
-	const float Dist = FVector::Dist2D(MyLoc, OppLoc);
-	const FVector Right = FRotationMatrix(ToOpp.Rotation()).GetUnitAxis(EAxis::Y);
-	FVector Desired = FVector::ZeroVector;
-
-	if (Dist > Policy.RangeMax)
-	{
-		Desired += ToOpp * Policy.Chase;
-	}
-	else if (Dist < Policy.RangeMin)
-	{
-		const float Back = Policy.Shell >= 0.5f ? 0.35f : 1.f;
-		Desired -= ToOpp * Back;
-	}
-
-	if (Policy.Circle > 0.f)
-	{
-		Desired += Right * Policy.Circle;
-	}
-	if (Policy.SouthpawStep > 0.f)
-	{
-		Desired -= Right * Policy.SouthpawStep;
-	}
-
-	FVector Center = FVector::ZeroVector;
-	if (Policy.CutRing > 0.f && FFBStylePolicy::FindRingCenter(GetWorld(), Center))
-	{
-		const FVector Off = OppLoc - Center;
-		const float Radius = Off.Size2D();
-		if (Radius > 50.f)
-		{
-			const FVector Dir = Off.GetSafeNormal2D();
-			const FVector CutPoint = OppLoc - Dir * FMath::Min((Policy.RangeMin + Policy.RangeMax) * 0.5f, Radius);
-			Desired += (CutPoint - MyLoc).GetSafeNormal2D() * Policy.CutRing;
-		}
-	}
-	else if (Policy.Circle > 0.2f && FFBStylePolicy::FindRingCenter(GetWorld(), Center))
-	{
-		const float MyRadius = FVector::Dist2D(MyLoc, Center);
-		if (MyRadius > 260.f)
-		{
-			Desired += (Center - MyLoc).GetSafeNormal2D() * 0.8f;
-		}
-	}
-
-	if (!Desired.IsNearlyZero())
-	{
-		Self->AddMovementInput(Desired.GetSafeNormal2D(), 1.f);
-	}
-}
-
-void AFBBoxerAIController::ReactToPunch(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBStylePolicy& Policy)
-{
-	UFBCombatComponent* SelfCombat = Self->GetCombatComponent();
-	UFBCombatComponent* OppCombat = Opponent ? Opponent->GetCombatComponent() : nullptr;
-	if (!SelfCombat || !OppCombat || SelfCombat->IsAttackCommitted())
-	{
-		return;
-	}
-
-	const EFBAttackId Incoming = OppCombat->GetActiveAttack();
-	const bool bHook = Incoming == EFBAttackId::LeadHook || Incoming == EFBAttackId::RearHook;
-	const float Reflex = FFBFighterBalance::Normalized(ReadRating(Self, EFBAttributeId::Reflexes));
-	const float Guard = FFBFighterBalance::Normalized(ReadRating(Self, EFBAttributeId::Guarding));
-
-	if (Policy.Shell >= 0.5f)
-	{
-		Offer(Self, Opponent, EFBAttackId::None, true, EFBGuardState::High, false, false, EFBRingAction::None, FVector2D::ZeroVector);
-		return;
-	}
-
-	if (bHook && Reflex > 0.45f && Policy.Slip > 0.15f)
-	{
-		Offer(Self, Opponent, EFBAttackId::None, true, EFBGuardState::Weave, false, false, EFBRingAction::None, FVector2D::ZeroVector);
-		Self->BeginDefenseSlip(FVector2D(0.f, 1.f));
-		return;
-	}
-
-	if (Policy.Slip > 0.f && Reflex > 0.25f && FMath::FRand() < Policy.Slip * 0.55f)
-	{
-		if (FMath::FRand() < 0.5f)
-		{
-			const float Side = FMath::FRand() < 0.5f ? -1.f : 1.f;
-			Offer(Self, Opponent, EFBAttackId::None, false, EFBGuardState::Open, false, false, EFBRingAction::Slip, FVector2D(Side, 0.f));
-		}
-		else
-		{
-			Offer(Self, Opponent, EFBAttackId::None, false, EFBGuardState::Open, false, false, EFBRingAction::Slip, FVector2D(0.f, -1.f));
-		}
-		return;
-	}
-
-	// A low guard rating is the weakness. They only shell when the rating can hold one.
-	if (Guard > 0.55f && FMath::FRand() < 0.22f)
-	{
-		Offer(Self, Opponent, EFBAttackId::None, true, EFBGuardState::High, false, false, EFBRingAction::None, FVector2D::ZeroVector);
-	}
-}
-
-void AFBBoxerAIController::Throw(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBStylePolicy& Policy)
-{
-	struct FChoice
-	{
-		EFBAttackId Id;
-		float Weight;
-	};
-	const FChoice Choices[] = {
-		{ EFBAttackId::Jab, Policy.Jab },
-		{ EFBAttackId::Cross, Policy.Straight },
-		{ EFBAttackId::LeadHook, Policy.LeadHook },
-		{ EFBAttackId::RearHook, Policy.RearHook },
-		{ EFBAttackId::LeadUppercut, Policy.LeadUppercut },
-		{ EFBAttackId::RearUppercut, Policy.RearUppercut },
-	};
-
-	float Weights[UE_ARRAY_COUNT(Choices)];
-	float Sum = 0.f;
-	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Choices); ++Index)
-	{
-		Weights[Index] = FMath::Max(0.f, Choices[Index].Weight) * Self->GetHandPower(Choices[Index].Id);
-		Sum += Weights[Index];
-	}
-
-	EFBAttackId Attack = EFBAttackId::Jab;
-	if (Sum > 0.f)
-	{
-		float Roll = FMath::FRand() * Sum;
-		for (int32 Index = 0; Index < UE_ARRAY_COUNT(Choices); ++Index)
-		{
-			Roll -= Weights[Index];
-			if (Roll <= 0.f)
-			{
-				Attack = Choices[Index].Id;
-				break;
-			}
-		}
-	}
-
-	UFBCombatComponent* Combat = Self->GetCombatComponent();
-	const float Energy = Combat ? Combat->GetBurstEnergy() : 0.f;
-	bool bPower = Policy.PowerChance > 0.f && Energy >= 28.f && FMath::FRand() < Policy.PowerChance;
-	const bool bBody = Policy.BodyChance > 0.f && FMath::FRand() < Policy.BodyChance;
-	const bool bShell = Policy.Shell >= 0.5f;
-	Offer(Self, Opponent, Attack, bShell, bShell ? EFBGuardState::High : EFBGuardState::Open, bBody, bPower, EFBRingAction::None, FVector2D::ZeroVector);
 }
 
 void AFBBoxerAIController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (!Brain)
+	{
+		return;
+	}
 
 	AFBBoxerCharacter* Self = Cast<AFBBoxerCharacter>(GetPawn());
 	if (!Self || !Self->HasAuthority() || Self->IsPlayerControlled())
@@ -298,32 +327,47 @@ void AFBBoxerAIController::Tick(float DeltaSeconds)
 	{
 		return;
 	}
-
 	const EFBPlayMode PlayMode = Mode->GetPlayMode();
 	if (PlayMode != EFBPlayMode::VersusAI && PlayMode != EFBPlayMode::Career)
 	{
+		if (BoundOpponentCombat.IsValid())
+		{
+			ResetTactics(TEXT("Mode"));
+		}
 		return;
 	}
 	if (Mode->IsPresentationPaused() || Mode->GetPhase() != EFBBoutPhase::RoundActive)
 	{
+		if (bRoundLatched)
+		{
+			ResetTactics(Mode->IsPresentationPaused() ? TEXT("Paused") : TEXT("Phase"));
+		}
 		bRoundLatched = false;
 		return;
 	}
 	if (!bRoundLatched)
 	{
 		bRoundLatched = true;
-		ThinkDelay = 0.6f;
-		AnswerUntil = -1.f;
-		PrevOppPhase = EFBAttackPhase::Idle;
+		PushDifficultyFromMode();
+		Brain->SetStyle(FFBStylePolicy::ForStyle(Self->GetFighterRecord().Style), Self->Stance);
+		Brain->SetTuning(Tuning);
+		Brain->Reset(TEXT("Bell"), World->GetTimeSeconds());
+		SmoothedMove = FVector::ZeroVector;
+		DecisionLeft = 0.f;
 	}
 
 	AFBBoxerCharacter* Opponent = OtherBoxer(Self);
 	if (!Opponent || Opponent == Self)
 	{
+		if (BoundOpponentCombat.IsValid())
+		{
+			ResetTactics(TEXT("NoOpponent"));
+			bRoundLatched = true;
+		}
 		return;
 	}
+	BindPair(Self, Opponent);
 
-	const FFBStylePolicy Policy = FFBStylePolicy::ForStyle(Self->GetFighterRecord().Style);
 	UFBCombatComponent* SelfCombat = Self->GetCombatComponent();
 	UFBCombatComponent* OppCombat = Opponent->GetCombatComponent();
 	if (!SelfCombat || !OppCombat)
@@ -331,92 +375,148 @@ void AFBBoxerAIController::Tick(float DeltaSeconds)
 		return;
 	}
 
-	StepFeet(Self, Opponent, Policy);
-
-	if (Self->IsKnockedDown() || Self->IsInClinch() || Opponent->IsKnockedDown())
+	if (Self->IsKnockedDown())
 	{
-		PrevOppPhase = OppCombat->GetAttackPhase();
-		return;
+		if (!bDownLatched)
+		{
+			bDownLatched = true;
+			UnbindAll();
+			Brain->Reset(TEXT("Knockdown"), World->GetTimeSeconds());
+			Brain->SetStyle(FFBStylePolicy::ForStyle(Self->GetFighterRecord().Style), Self->Stance);
+			Brain->SetTuning(Tuning);
+			SmoothedMove = FVector::ZeroVector;
+			MoveGoal = FVector::ZeroVector;
+		}
+	}
+	else
+	{
+		bDownLatched = false;
 	}
 
-	const EFBAttackPhase OppPhase = OppCombat->GetAttackPhase();
 	const float Now = World->GetTimeSeconds();
-	if (PrevOppPhase == EFBAttackPhase::Idle && (OppPhase == EFBAttackPhase::Startup || OppPhase == EFBAttackPhase::Active))
+	const FVector MyLoc = Self->GetActorLocation();
+	const FVector OppLoc = Opponent->GetActorLocation();
+	const FVector ToOpp = (OppLoc - MyLoc).GetSafeNormal2D();
+	const FVector Right = FVector::CrossProduct(FVector::UpVector, ToOpp).GetSafeNormal2D();
+	float Clearance = 1000.f;
+	FVector Safer = FVector::ZeroVector;
+	for (TActorIterator<AFBRingBounds> It(World); It; ++It)
 	{
-		ReactToPunch(Self, Opponent, Policy);
+		const float Radius = Self->GetCapsuleComponent() ? Self->GetCapsuleComponent()->GetScaledCapsuleRadius() : 34.f;
+		It->QueryFootwork(MyLoc, Radius, Clearance, Safer);
+		break;
 	}
-	if (PrevOppPhase == EFBAttackPhase::Active && OppPhase != EFBAttackPhase::Active)
+
+	FFBTacticalView View;
+	View.Now = Now;
+	View.bHasOpponent = true;
+	View.bAiMode = true;
+	View.bRoundActive = true;
+	View.bPaused = false;
+	View.bKnockedDown = Self->IsKnockedDown();
+	View.bOpponentDown = Opponent->IsKnockedDown();
+	View.bClinch = Self->IsInClinch();
+	View.bAttackCommitted = SelfCombat->IsAttackCommitted();
+	View.bComboBufferOpen = SelfCombat->IsComboBufferOpen();
+	View.bFacingLocked = Self->IsHookFacingLocked();
+	View.Distance = FVector::Dist2D(MyLoc, OppLoc);
+	View.FacingDot = FVector::DotProduct(Self->GetActorForwardVector().GetSafeNormal2D(), ToOpp);
+	const FVector Relative = Opponent->GetVelocity() - Self->GetVelocity();
+	View.ClosingSpeed = ToOpp.IsNearlyZero() ? 0.f : -FVector::DotProduct(Relative, ToOpp);
+	View.Energy = SelfCombat->GetBurstEnergy();
+	View.EnergyMax = SelfCombat->MaxBurstEnergy;
+	View.Fatigue = SelfCombat->GetFatigue();
+	View.Ceiling = SelfCombat->GetRecoverableCeiling();
+	View.BlockHealth = Self->GetBlockHealth();
+	View.BlockMax = Self->GetBlockHealthMax();
+	View.Stun = Self->GetStun();
+	View.JabCost = SelfCombat->GetAttackCost(EFBAttackId::Jab);
+	View.PunchRegenDelay = SelfCombat->GetPunchRegenDelay();
+	View.MinReach = SelfCombat->MinReachUU;
+	View.MaxReach = SelfCombat->MaxReachUU;
+	View.StartupSeconds = OppCombat->StartupSeconds;
+	View.RopeClearance = Clearance;
+	View.OwnGuard = SelfCombat->GetGuardState();
+	View.SeenGuard = OppCombat->GetGuardState();
+	View.ToOpponent = ToOpp;
+	View.OpponentVelocity = Opponent->GetVelocity();
+	View.SaferDirection = Safer;
+	View.Right = Right;
+	View.bLastMoveFailed = FailTime >= Tuning.MoveFailSeconds;
+	View.FailedMoveBucket = View.bLastMoveFailed ? LastMoveBucket : INDEX_NONE;
+	FillCosts(SelfCombat, View);
+
+	FFBActionChoice Buffered;
+	if (Brain->TryBufferBeat(View, Buffered))
 	{
-		const EFBContactResult Result = OppCombat->GetLastImpact().Result;
-		if (Result == EFBContactResult::Miss || Result == EFBContactResult::Blocked)
+		Submit(Self, Opponent, Buffered);
+		View.bAttackCommitted = SelfCombat->IsAttackCommitted();
+		View.bComboBufferOpen = SelfCombat->IsComboBufferOpen();
+		View.Energy = SelfCombat->GetBurstEnergy();
+	}
+
+	FFBActionChoice Reaction;
+	if (!Self->IsKnockedDown() && !Self->IsInClinch() && Brain->ConsumeReadyDefense(Now, OppCombat->StartupSeconds, Reaction))
+	{
+		if (Reaction.Attack == EFBAttackId::None)
 		{
-			AnswerUntil = Now + 0.55f;
+			Submit(Self, Opponent, Reaction);
 		}
 	}
-	PrevOppPhase = OppPhase;
 
-	const bool bIncoming = OppPhase == EFBAttackPhase::Startup || OppPhase == EFBAttackPhase::Active;
-	if (Policy.Shell >= 0.5f && bIncoming)
+	DecisionLeft -= DeltaSeconds;
+	FFBTacticalDecision Decision;
+	const bool bDecide = DecisionLeft <= 0.f;
+	if (bDecide)
 	{
-		return;
-	}
-
-	ThinkDelay -= DeltaSeconds;
-	if (ThinkDelay > 0.f || SelfCombat->IsAttackCommitted())
-	{
-		return;
-	}
-
-	const bool bWalksThrough = Policy.CutRing >= 0.5f || Policy.RangeMax <= 125.f;
-	if (bIncoming && !bWalksThrough)
-	{
-		ThinkDelay = 0.12f;
-		return;
-	}
-
-	const float Energy = SelfCombat->GetBurstEnergy();
-	const float MaxEnergy = FMath::Max(1.f, SelfCombat->MaxBurstEnergy);
-	const float RestAt = Policy.RestFraction * Self->GetCombatDerived().EnduranceCost;
-	if (Energy < 14.f || Energy / MaxEnergy < RestAt)
-	{
-		ThinkDelay = 0.25f;
-		if (Policy.Shell >= 0.5f || Energy < 14.f)
+		Decision = Brain->Decide(View);
+		const float Interval = FFBTactical::ClampDecisionInterval(Brain->GetProfile().DecisionInterval, Tuning);
+		DecisionLeft = Interval;
+		MoveGoal = Decision.MoveDesired;
+		if (Decision.Action.bSubmit && Decision.Action.Attack == EFBAttackId::None)
 		{
-			Offer(Self, Opponent, EFBAttackId::None, true, EFBGuardState::High, false, false, EFBRingAction::None, FVector2D::ZeroVector);
+			Submit(Self, Opponent, Decision.Action);
 		}
-		return;
-	}
-
-	const bool bAnswering = Now <= AnswerUntil;
-	if (!bAnswering && Policy.WaitForMiss > 0.f && FMath::FRand() < Policy.WaitForMiss)
-	{
-		ThinkDelay = 0.28f;
-		if (Policy.Shell >= 0.5f && SelfCombat->GetGuardState() != EFBGuardState::High)
+		else if (Decision.Action.bSubmit && Decision.Action.Attack != EFBAttackId::None && (!View.bAttackCommitted || View.bComboBufferOpen))
 		{
-			Offer(Self, Opponent, EFBAttackId::None, true, EFBGuardState::High, false, false, EFBRingAction::None, FVector2D::ZeroVector);
+			Submit(Self, Opponent, Decision.Action);
 		}
-		return;
+		LastMoveBucket = Decision.MoveBucket;
 	}
+	SmoothedMove = FMath::VInterpTo(SmoothedMove, MoveGoal, DeltaSeconds, Tuning.MoveEase);
 
-	const float Dist = FVector::Dist2D(Self->GetActorLocation(), Opponent->GetActorLocation());
-	const bool bInBand = Dist >= Policy.RangeMin && Dist <= Policy.RangeMax;
-	const bool bAnswerRange = Dist >= 80.f && Dist <= 210.f;
-	if (bAnswering)
+	const bool bCommittedMove = SelfCombat->IsAttackCommitted() && !SelfCombat->IsComboBufferOpen();
+	ApplyFootwork(Self, SmoothedMove, bCommittedMove || Self->IsHookFacingLocked());
+
+	const float Moved = FVector::Dist2D(MyLoc, LastLocation);
+	FVector Dir = FVector::ZeroVector;
+	float Intensity = 0.f;
+	FFBTactical::SeparateFootwork(SmoothedMove, Dir, Intensity);
+	if (Intensity > 0.45f && Moved < 6.f * DeltaSeconds && !Self->IsKnockedDown() && !Self->IsInClinch())
 	{
-		if (!bAnswerRange)
+		FailTime += DeltaSeconds;
+	}
+	else
+	{
+		FailTime = 0.f;
+	}
+	LastLocation = Self->GetActorLocation();
+
+	if (CVarDebugAI.GetValueOnGameThread() != 0 && (bDecide || Brain->GetState() != LastLoggedState) && Now - LastDebugTime > 0.45f)
+	{
+		LastDebugTime = Now;
+		LastLoggedState = Brain->GetState();
+		if (!bDecide)
 		{
-			ThinkDelay = 0.12f;
-			return;
+			Decision.State = Brain->GetState();
+			Decision.Reason = Brain->GetReason();
+			Decision.MoveDesired = SmoothedMove;
 		}
-		AnswerUntil = -1.f;
+		const FString Line = Brain->DebugLine(View, Decision) + TEXT(" | intent ") + LastIntentText;
+		UE_LOG(LogTemp, Log, TEXT("%s"), *Line);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(0x464241, 1.2f, FColor::Silver, Line);
+		}
 	}
-	else if (!bInBand)
-	{
-		ThinkDelay = 0.12f;
-		return;
-	}
-
-	const float Speed = FMath::Max(0.5f, Self->GetCombatDerived().PunchSpeed);
-	ThinkDelay = Policy.SecondsBetweenPunches / Speed;
-	Throw(Self, Opponent, Policy);
 }

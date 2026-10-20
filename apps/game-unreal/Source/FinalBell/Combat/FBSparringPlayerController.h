@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Combat/FBCombatTypes.h"
 #include "Combat/FBFighterBalance.h"
+#include "Combat/FBTacticalTypes.h"
 #include "InputCoreTypes.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Text/STextBlock.h"
@@ -88,7 +89,7 @@ protected:
 	void CollectLegalOpponents(TArray<int32>& Out) const;
 
 	UFUNCTION(Server, Reliable)
-	void ServerStartCompetitiveBout(FFBFighterRecord PlayerBuild, FFBFighterRecord OpponentBuild, EFBPlayMode RequestedMode);
+	void ServerStartCompetitiveBout(FFBFighterRecord PlayerBuild, FFBFighterRecord OpponentBuild, EFBPlayMode RequestedMode, EFBAIDifficulty Difficulty);
 
 	UFUNCTION(Client, Reliable)
 	void ClientBoutAccepted();
@@ -150,6 +151,7 @@ protected:
 	int32 BuilderPage = 0;
 	int32 PlayerPick = 0;
 	int32 OpponentPick = 1;
+	EFBAIDifficulty SelectDifficulty = EFBAIDifficulty::Club;
 	TArray<FFBFighterRecord> SelectRoster;
 	FFBFighterRecord Draft;
 	FString SelectStatus;

@@ -28,6 +28,12 @@ public:
 	 */
 	bool GetCornerAnchor(EFBCornerSkin Corner, float CapsuleRadius, FVector& OutLocation, FRotator& OutFacing) const;
 
+	/**
+	 * Ring-local clearance. The safer direction points toward this volume's center, not a world constant.
+	 * Clearance subtracts the capsule radius from the nearest rope.
+	 */
+	bool QueryFootwork(const FVector& WorldLocation, float CapsuleRadius, float& OutClearance, FVector& OutSaferDirection) const;
+
 protected:
 	UPROPERTY(VisibleAnywhere, Category = "FinalBell|Ring")
 	TObjectPtr<UBoxComponent> RingVolume;

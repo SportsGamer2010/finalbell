@@ -4,15 +4,19 @@
 #include "CoreMinimal.h"
 #include "AIController.h"
 #include "Combat/FBCombatTypes.h"
+#include "Combat/FBTacticalTypes.h"
 #include "FBBoxerAIController.generated.h"
 
 class AFBBoxerCharacter;
-struct FFBStylePolicy;
+class UFBCombatComponent;
+struct FFBTacticalBrain;
+struct FFBActionChoice;
 
 /**
- * Chooses the next step and the next intent for the unpaired opponent.
- * Why: a default AI controller stands still, so the style on the card never shows up.
- * What: moves and submits FFBCombatIntent. It does not write damage, stamina, or the winner.
+ * Chooses steps and intents for the unpaired opponent.
+ * Why: a default controller stands still, and a rusher never measures.
+ * What: runs a tactical state machine on authority in versus-AI and career.
+ * It submits FFBCombatIntent. It does not write damage, stamina, or the winner.
  */
 UCLASS()
 class FINALBELL_API AFBBoxerAIController : public AAIController
@@ -23,26 +27,46 @@ public:
 	AFBBoxerAIController();
 
 	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnUnPossess() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 
-private:
-	void StepFeet(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBStylePolicy& Policy) const;
-	void Offer(
-		AFBBoxerCharacter* Self,
-		AFBBoxerCharacter* Opponent,
-		EFBAttackId Attack,
-		bool bGuardHeld,
-		EFBGuardState Guard,
-		bool bBody,
-		bool bPower,
-		EFBRingAction Action,
-		FVector2D MoveAxis);
-	void Throw(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBStylePolicy& Policy);
-	void ReactToPunch(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBStylePolicy& Policy);
+	void SetDifficulty(EFBAIDifficulty Difficulty);
+	void ResetTactics(const TCHAR* Reason);
 
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|AI")
+	FFBTacticalTuning Tuning;
+
+private:
+	UFUNCTION()
+	void HandleOpponentPhase(EFBAttackPhase Phase);
+
+	UFUNCTION()
+	void HandleOpponentImpact(const FFBImpactEvent& Impact);
+
+	UFUNCTION()
+	void HandleOwnImpact(const FFBImpactEvent& Impact);
+
+	void BindPair(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent);
+	void UnbindAll();
+	EFBIntentResult Submit(AFBBoxerCharacter* Self, AFBBoxerCharacter* Opponent, const FFBActionChoice& Action);
+	void ApplyFootwork(AFBBoxerCharacter* Self, const FVector& Desired, bool bScaleDown);
+	void PushDifficultyFromMode();
+
+	FFBTacticalBrain* Brain = nullptr;
 	int32 NextSequence = 1;
-	float ThinkDelay = 0.5f;
-	float AnswerUntil = -1.f;
-	EFBAttackPhase PrevOppPhase = EFBAttackPhase::Idle;
+	float DecisionLeft = 0.f;
+	float FailTime = 0.f;
+	float LastDebugTime = -1.f;
+	int32 LastMoveBucket = INDEX_NONE;
+	FVector SmoothedMove = FVector::ZeroVector;
+	FVector MoveGoal = FVector::ZeroVector;
+	FVector LastLocation = FVector::ZeroVector;
 	bool bRoundLatched = false;
+	bool bDownLatched = false;
+	EFBTacticalState LastLoggedState = EFBTacticalState::Inactive;
+	FString LastIntentText;
+	TWeakObjectPtr<AFBBoxerCharacter> BoundOpponent;
+	TWeakObjectPtr<UFBCombatComponent> BoundOpponentCombat;
+	TWeakObjectPtr<UFBCombatComponent> BoundSelfCombat;
 };

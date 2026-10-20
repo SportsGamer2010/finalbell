@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
 #include "Combat/FBFighterBalance.h"
+#include "Combat/FBTacticalTypes.h"
 #include "FBGameInstance.generated.h"
 
 UCLASS()
@@ -25,11 +26,12 @@ public:
 	void SetCareerFighterSelect(bool bCareer);
 	bool ConsumeCareerFighterSelect();
 
-	void SetPendingBout(const FFBFighterRecord& PlayerBuild, const FFBFighterRecord& OpponentBuild);
+	void SetPendingBout(const FFBFighterRecord& PlayerBuild, const FFBFighterRecord& OpponentBuild, EFBAIDifficulty Difficulty = EFBAIDifficulty::Club);
 	void ClearPendingBout();
 	bool HasPendingBout() const { return bPendingBout; }
 	const FFBFighterRecord& GetPendingPlayer() const { return PendingPlayer; }
 	const FFBFighterRecord& GetPendingOpponent() const { return PendingOpponent; }
+	EFBAIDifficulty GetPendingDifficulty() const { return PendingDifficulty; }
 
 	virtual void OnWorldChanged(UWorld* OldWorld, UWorld* NewWorld) override;
 
@@ -39,6 +41,8 @@ private:
 
 	UPROPERTY()
 	FFBFighterRecord PendingOpponent;
+
+	EFBAIDifficulty PendingDifficulty = EFBAIDifficulty::Club;
 
 	bool bPendingBout = false;
 	bool bOpenFighterSelect = false;

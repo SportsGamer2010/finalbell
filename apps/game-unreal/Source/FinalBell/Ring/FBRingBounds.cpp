@@ -54,3 +54,26 @@ bool AFBRingBounds::GetCornerAnchor(EFBCornerSkin Corner, float CapsuleRadius, F
 	OutFacing = ToCenter.IsNearlyZero() ? FRotator::ZeroRotator : ToCenter.Rotation();
 	return true;
 }
+
+bool AFBRingBounds::QueryFootwork(const FVector& WorldLocation, float CapsuleRadius, float& OutClearance, FVector& OutSaferDirection) const
+{
+	OutClearance = 1000.f;
+	OutSaferDirection = FVector::ZeroVector;
+	if (!RingVolume)
+	{
+		return false;
+	}
+	const FTransform& Transform = RingVolume->GetComponentTransform();
+	const FVector Local = Transform.InverseTransformPosition(WorldLocation);
+	const FVector Extent = RingVolume->GetUnscaledBoxExtent();
+	const FVector Scale = Transform.GetScale3D().GetAbs();
+	const float ClearX = (Extent.X - FMath::Abs(Local.X)) * Scale.X;
+	const float ClearY = (Extent.Y - FMath::Abs(Local.Y)) * Scale.Y;
+	OutClearance = FMath::Min(ClearX, ClearY) - FMath::Max(0.f, CapsuleRadius);
+	const FVector LocalIn(Local.X, Local.Y, 0.f);
+	if (LocalIn.SizeSquared2D() > 25.f)
+	{
+		OutSaferDirection = Transform.TransformVectorNoScale(-LocalIn).GetSafeNormal2D();
+	}
+	return true;
+}

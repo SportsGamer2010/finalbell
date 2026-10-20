@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
+#include "Combat/FBTacticalTypes.h"
 #include "FBPlayerSettings.generated.h"
 
 UCLASS()
@@ -18,6 +19,10 @@ public:
 
 	UPROPERTY()
 	bool bReducedMotion = false;
+
+	/** Last AI difficulty on the fighter screen. Old saves load Club. */
+	UPROPERTY()
+	EFBAIDifficulty AIDifficulty = EFBAIDifficulty::Club;
 
 	static UFBPlayerSettingsSave* LoadOrCreate();
 	void WriteToDisk() const;
