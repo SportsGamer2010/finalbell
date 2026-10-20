@@ -766,6 +766,53 @@ UClass* AFBSparringGameMode::GetDefaultPawnClassForController_Implementation(ACo
 	return DefaultPawnClass;
 }
 
+void AFBSparringGameMode::EnsureConfirmingPlayerPossessesFighter()
+{
+	if (!HasAuthority() || !GetWorld())
+	{
+		return;
+	}
+	APlayerController* PC = Cast<APlayerController>(BoutRequester.Get());
+	if (!PC)
+	{
+		PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	}
+	if (!PC || Cast<AFBBoxerCharacter>(PC->GetPawn()))
+	{
+		return;
+	}
+
+	AFBBoxerCharacter* Human = nullptr;
+	for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+	{
+		AFBBoxerCharacter* Boxer = *It;
+		if (!Boxer || Boxer->ActorHasTag(TEXT("FB_P1Opponent")))
+		{
+			continue;
+		}
+		AController* HeldBy = Boxer->GetController();
+		if (HeldBy && HeldBy != PC && HeldBy->IsPlayerController())
+		{
+			continue;
+		}
+		Human = Boxer;
+		break;
+	}
+	if (!Human)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FinalBell: confirming player has no fighter at the bell."));
+		return;
+	}
+	if (AController* Other = Human->GetController())
+	{
+		if (Other != PC)
+		{
+			Other->UnPossess();
+		}
+	}
+	PC->Possess(Human);
+}
+
 void AFBSparringGameMode::StartBout()
 {
 	if (!HasAuthority() || Phase != EFBBoutPhase::PreBout)
@@ -774,6 +821,7 @@ void AFBSparringGameMode::StartBout()
 	}
 	CurrentRound = 1;
 	SendFightersToCorners();
+	EnsureConfirmingPlayerPossessesFighter();
 	Phase = EFBBoutPhase::RoundActive;
 	PhaseTimeRemaining = RoundDurationSeconds;
 	bResultFinalized = false;

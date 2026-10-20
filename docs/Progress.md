@@ -407,5 +407,13 @@ Menus (front end, mode select, fighter select, pause) now use Game and UI, focus
 - Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (38.16 s) and linked `UnrealEditor-FinalBell.dll`. Live Coding did not block it.
 - PIE was not run. The pad was not watched. The events were not seen in a session.
 
+### 2026-10-20 — Fight controls died at the bell
+
+The pad still worked on the menus, and Options still opened pause, because those keys are read on the player controller. Move, punches, block, weave, and the sticks are Enhanced Input actions on the possessed boxer. Opening fighter select or the mode menu removes that mapping. `RestoreFightMapping` put it back only when `FSceneViewport::IsForegroundWindow()` was true. That call asks the viewport HWND if it is the OS foreground window. In the editor that HWND is not, even while the same controller is receiving the pad. The bell therefore set `bFightMappingWanted` false, called `RemoveMappingContext`, and the next tick never restored it because the sample never changed. The round phase was already `RoundActive`. `AllowsNewAttacks` allows new punches during that phase. Movement is not gated on the phase. The actions never fired. The left stick still has one 0.22 radial zone. AxisConfig dead zones stay 0.
+
+Closing the menu or pause now sets Game Only, focuses the game viewport, and adds the fight mapping on the local player who owns the possessed boxer. A lost Slate focus can still remove it. Coming back adds it again. If the confirming player has no boxer when the bell rings, `StartBout` possesses the human fighter first. The pad was not watched. The events were not seen in a session.
+
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (10.87 s) and linked `UnrealEditor-FinalBell.dll`. The first pass failed to compile because a local named `Owner` hid `AActor::Owner`. Live Coding did not block the link.
+
 
 

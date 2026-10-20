@@ -1693,6 +1693,7 @@ bool AFBBoxerCharacter::ControllerWantsFightMapping() const
 
 void AFBBoxerCharacter::ClearMappingContext()
 {
+	bFightMappingApplied = false;
 	ULocalPlayer* LocalPlayer = FightMappingPlayer.Get();
 	if (!LocalPlayer)
 	{
@@ -1734,6 +1735,7 @@ void AFBBoxerCharacter::ApplyMappingContext()
 		if (DefaultMappingContext)
 		{
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
+			bFightMappingApplied = true;
 		}
 	}
 }

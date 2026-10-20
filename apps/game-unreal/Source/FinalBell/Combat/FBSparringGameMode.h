@@ -79,6 +79,9 @@ public:
 	/** Blue and red corners from the ring volume. Used for the first bell, a rematch, and the return after the round. */
 	void SendFightersToCorners();
 
+	/** The confirming player must possess a boxer before the round accepts input. */
+	void EnsureConfirmingPlayerPossessesFighter();
+
 	/** False during a knockdown, a rest, after the result, and while the bell is waiting on a glove. */
 	bool AllowsNewAttacks() const;
 

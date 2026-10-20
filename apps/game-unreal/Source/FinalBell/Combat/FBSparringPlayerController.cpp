@@ -179,6 +179,16 @@ void AFBSparringPlayerController::PlayerTick(float DeltaTime)
 	SubmitLocalGetUpAim();
 	UpdateBoutOverlay(DeltaTime);
 	SyncFightMappingToFocus();
+	if (IsLocalController() && bFightMappingWanted && !IsMenuTakingInput())
+	{
+		if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetPawn()))
+		{
+			if (!Boxer->IsFightMappingApplied())
+			{
+				Boxer->SetFightMappingActive(true);
+			}
+		}
+	}
 	if (bFighterSelectVisible && bBuilderOpen)
 	{
 		if (APawn* PreviewPawn = GetPawn())
@@ -853,12 +863,45 @@ bool AFBSparringPlayerController::WantsFightMapping() const
 
 bool AFBSparringPlayerController::ViewportHasFocus() const
 {
-	const UGameViewportClient* Viewport = LocalViewport();
-	if (!Viewport || !Viewport->Viewport)
+	// FSceneViewport::IsForegroundWindow() asks the viewport HWND if it is the
+	// foreground window. In the editor that HWND is not, even while this
+	// controller is receiving the pad. That reading removed the fight mapping
+	// at the bell and never put it back. Slate focus is the signal instead.
+	if (!FSlateApplication::IsInitialized())
 	{
 		return true;
 	}
-	return Viewport->Viewport->IsForegroundWindow();
+	const UGameViewportClient* ViewportClient = LocalViewport();
+	const TSharedPtr<SViewport> ViewportWidget = ViewportClient ? ViewportClient->GetGameViewportWidget() : nullptr;
+	if (!ViewportWidget.IsValid())
+	{
+		return true;
+	}
+
+	int32 UserIndex = 0;
+	if (const ULocalPlayer* LP = GetLocalPlayer())
+	{
+		const int32 Mapped = IPlatformInputDeviceMapper::Get().GetUserIndexForPlatformUser(LP->GetPlatformUserId());
+		if (Mapped >= 0)
+		{
+			UserIndex = Mapped;
+		}
+	}
+	const TSharedPtr<SWidget> Focused = FSlateApplication::Get().GetUserFocusedWidget(UserIndex);
+	if (!Focused.IsValid())
+	{
+		return true;
+	}
+
+	const TSharedPtr<SWidget> ViewportParent = ViewportWidget->GetParentWidget();
+	for (TSharedPtr<SWidget> Walk = Focused; Walk.IsValid(); Walk = Walk->GetParentWidget())
+	{
+		if (Walk.Get() == ViewportWidget.Get() || Walk == ViewportParent)
+		{
+			return true;
+		}
+	}
+	return !Focused->GetParentWidget().IsValid();
 }
 
 void AFBSparringPlayerController::SuspendFightMapping()
@@ -876,12 +919,32 @@ void AFBSparringPlayerController::RestoreFightMapping()
 	{
 		return;
 	}
-	bFightMappingWanted = ViewportHasFocus();
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+	if (FSlateApplication::IsInitialized())
+	{
+		if (const UGameViewportClient* ViewportClient = LocalViewport())
+		{
+			if (TSharedPtr<SViewport> ViewportWidget = ViewportClient->GetGameViewportWidget())
+			{
+				int32 UserIndex = 0;
+				if (const ULocalPlayer* LP = GetLocalPlayer())
+				{
+					const int32 Mapped = IPlatformInputDeviceMapper::Get().GetUserIndexForPlatformUser(LP->GetPlatformUserId());
+					if (Mapped >= 0)
+					{
+						UserIndex = Mapped;
+					}
+				}
+				FSlateApplication::Get().SetUserFocus(UserIndex, ViewportWidget.ToSharedRef(), EFocusCause::SetDirectly);
+			}
+		}
+	}
+	bFightMappingWanted = true;
+	bSawViewportFocus = true;
 	if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetPawn()))
 	{
-		Boxer->SetFightMappingActive(bFightMappingWanted);
+		Boxer->SetFightMappingActive(true);
 	}
 }
 

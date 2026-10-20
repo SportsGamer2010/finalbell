@@ -43,6 +43,9 @@ public:
 	/** Adds or removes the fight mapping on the owning local player. A menu passes false. */
 	void SetFightMappingActive(bool bActive);
 
+	/** True after the fight mapping was added for the current local player. */
+	bool IsFightMappingApplied() const { return bFightMappingApplied; }
+
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Combat")
 	UFBCombatComponent* GetCombatComponent() const { return CombatComponent; }
 
@@ -756,6 +759,7 @@ protected:
 	void ClearMappingContext();
 	bool ControllerWantsFightMapping() const;
 	TWeakObjectPtr<ULocalPlayer> FightMappingPlayer;
+	bool bFightMappingApplied = false;
 	void TintMesh(UStaticMeshComponent* MeshComp, const FLinearColor& Color);
 	void TintSkeletalMesh(const FLinearColor& Tint);
 	void SetupMannequinVisuals();
