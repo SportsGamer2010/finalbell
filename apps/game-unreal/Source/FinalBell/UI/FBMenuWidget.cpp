@@ -1,4 +1,5 @@
 #include "UI/FBMenuWidget.h"
+#include "UI/FBBuildLabel.h"
 #include "UI/FBMenuArt.h"
 #include "UI/FBMenuDeveloperSettings.h"
 #include "UI/FBGameInstance.h"
@@ -765,7 +766,7 @@ void UFBMenuWidget::BuildInterface()
 	{
 		MainGapSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	}
-	VersionLabel = MakeText(TEXT(""), 12, MutedGold(), false);
+	VersionLabel = MakeText(FString::Printf(TEXT("VERSION %s"), FBBuild::Label), 28, WarmWhite(), true);
 	MainStack->AddChildToVerticalBox(VersionLabel);
 	if (UOverlaySlot* MainSlot = Root->AddChildToOverlay(MainWidth))
 	{
@@ -907,22 +908,10 @@ void UFBMenuWidget::BuildInterface()
 	Fill(Root, LoadingDim);
 	LoadingLayer = LoadingDim;
 
-	const FString ProjectVersion = Project ? Project->ProjectVersion : FString();
-	const FString BuildVersion = FApp::GetBuildVersion();
 	if (VersionLabel)
 	{
-		if (!ProjectVersion.IsEmpty())
-		{
-			VersionLabel->SetText(FText::FromString(ProjectVersion));
-		}
-		else if (!BuildVersion.IsEmpty())
-		{
-			VersionLabel->SetText(FText::FromString(FString::Printf(TEXT("Build %s"), *BuildVersion)));
-		}
-		else
-		{
-			VersionLabel->SetVisibility(ESlateVisibility::Collapsed);
-		}
+		VersionLabel->SetText(FText::FromString(FString::Printf(TEXT("VERSION %s"), FBBuild::Label)));
+		VersionLabel->SetVisibility(ESlateVisibility::Visible);
 	}
 	RefreshPrompt();
 }

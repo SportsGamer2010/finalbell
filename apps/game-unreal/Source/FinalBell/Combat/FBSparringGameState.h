@@ -67,7 +67,7 @@ public:
 	FString RefereeCall;
 
 	/** Bump when the lobby record layout changes. A guest with a different number is refused. */
-	static constexpr int32 LobbyProtocol = 2;
+	static constexpr int32 LobbyProtocol = 3;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
 	int32 LobbyProtocolSeen = LobbyProtocol;

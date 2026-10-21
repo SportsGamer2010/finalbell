@@ -1,5 +1,9 @@
 # Final Bell — Progress Log
 
+## 2026-10-21 — Version 0.6.6 two confirm columns
+
+The ring homepage shows VERSION 0.6.6 in a large plate, and the same number in the top-right. Fighter select is a left column for player 1 and a right column for player 2. Each column lists every fighter. Confirming one column does not confirm the other. A fighter confirmed on one side is marked taken on the other. `Build.bat FinalBell Win64 Development` finished with `Result: Succeeded`. Play was not run.
+
 ## 2026-10-21 — Version 0.6.5 split fighter select
 
 Local VS and online private matches show every fighter on one grid. Player 1 moves the red cursor and player 2 moves the blue cursor at the same time. Confirming a fighter marks that tile, and the other player cannot confirm the same fighter. Join Match has a white HOST ADDRESS box. The ring menu shows VERSION 0.6.5. `Build.bat FinalBell Win64 Development` finished with `Result: Succeeded`. Play was not run.

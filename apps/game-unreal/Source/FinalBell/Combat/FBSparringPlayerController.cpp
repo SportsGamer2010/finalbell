@@ -872,16 +872,57 @@ void AFBSparringPlayerController::ShowModeMenu()
 				.ShadowOffset(FVector2D(0.f, 3.f))
 				.ShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.55f))
 			]
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 22.f)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 18.f)
 			[
-				SNew(STextBlock)
-				.Text(FText::FromString(FString::Printf(TEXT("VERSION %s"), FBBuild::Label)))
-				.Font(FBMenuArt::PosterFont(14, 60))
-				.ColorAndOpacity(Quiet)
+				SNew(SBorder)
+				.BorderImage(White)
+				.BorderBackgroundColor(Paper)
+				.Padding(FMargin(16.f, 10.f))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(FString::Printf(TEXT("VERSION  %s"), FBBuild::Label)))
+					.Font(FBMenuArt::PosterFont(32, 80))
+					.ColorAndOpacity(FLinearColor(0.08f, 0.05f, 0.05f, 1.f))
+				]
 			]
 			+ SVerticalBox::Slot().AutoHeight()
 			[
 				List
+			]
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.58f, 0.08f, 0.94f, 0.34f))
+		.Offset(FMargin(0.f))
+		.Alignment(FVector2D(0.f, 0.f))
+		[
+			SNew(SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(FLinearColor(0.96f, 0.93f, 0.86f, 0.96f))
+			.Padding(FMargin(28.f, 22.f))
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("BOTH PLAYERS")))
+					.Font(FBMenuArt::PosterFont(16, 80))
+					.ColorAndOpacity(FLinearColor(0.35f, 0.12f, 0.12f, 1.f))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(FBBuild::Label))
+					.Font(FBMenuArt::PosterFont(64, 40))
+					.ColorAndOpacity(FLinearColor(0.08f, 0.05f, 0.05f, 1.f))
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("The other screen must show this same number.")))
+					.Font(FBMenuArt::PosterFont(14, 20))
+					.ColorAndOpacity(FLinearColor(0.2f, 0.16f, 0.12f, 1.f))
+					.AutoWrapText(true)
+				]
 			]
 		]);
 

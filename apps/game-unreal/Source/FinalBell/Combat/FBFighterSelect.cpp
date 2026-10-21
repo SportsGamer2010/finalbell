@@ -675,19 +675,19 @@ void AFBSparringPlayerController::ShowFighterSelect()
 	}
 	if (bOpening && SeatMode == EFBMatchSeatMode::LocalVersus)
 	{
-		SelectStatus = TEXT("Both controllers move at once. Red is player 1, blue is player 2. Cross confirms.");
+		SelectStatus = TEXT("Left column is player 1. Right column is player 2. Each pad confirms its own column.");
 	}
 	if (bOpening && SeatMode == EFBMatchSeatMode::Online)
 	{
 		if (MatchSeat == 1)
 		{
-			SelectStatus = TEXT("You are player 2. Move the blue cursor. Cross confirms.");
+			SelectStatus = TEXT("You are player 2. Confirm only the right column.");
 		}
 		else if (UGameInstance* GI = GetGameInstance())
 		{
 			if (UFBPrivateRoomSubsystem* Rooms = GI->GetSubsystem<UFBPrivateRoomSubsystem>())
 			{
-				SelectStatus = FString::Printf(TEXT("You are player 1. Share %s. Move the red cursor. Cross confirms."), *Rooms->GetShareToken());
+				SelectStatus = FString::Printf(TEXT("You are player 1. Share %s. Confirm only the left column."), *Rooms->GetShareToken());
 			}
 		}
 	}
@@ -1344,11 +1344,13 @@ void AFBSparringPlayerController::RebuildSplitSelect()
 	{
 		RightFocus = SelectRoster.Num() > 1 ? 1 : 0;
 	}
-	const bool bLocalRight = SeatMode == EFBMatchSeatMode::Online && MatchSeat == 1;
+	const bool bOnline = SeatMode == EFBMatchSeatMode::Online;
+	const bool bLocalRight = bOnline && MatchSeat == 1;
+	const bool bLocalLeft = !bOnline || MatchSeat == 0;
 	const FLinearColor Paper = FBMenuArt::Paper();
 	const FLinearColor Quiet = FBMenuArt::Quiet();
-	const FLinearColor LeftRed(0.55f, 0.10f, 0.12f, 1.f);
-	const FLinearColor RightBlue(0.10f, 0.18f, 0.48f, 1.f);
+	const FLinearColor LeftRed(0.45f, 0.08f, 0.10f, 1.f);
+	const FLinearColor RightBlue(0.08f, 0.16f, 0.42f, 1.f);
 	const FSlateBrush* White = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
 	static FButtonStyle ClearButton = []()
 	{
@@ -1363,185 +1365,168 @@ void AFBSparringPlayerController::RebuildSplitSelect()
 		return Style;
 	}();
 
-	auto Initials = [](const FString& Name)
+	auto MakeSeatColumn = [&](bool bRight) -> TSharedRef<SWidget>
 	{
-		FString Out;
-		TArray<FString> Words;
-		Name.ParseIntoArray(Words, TEXT(" "), true);
-		for (const FString& Word : Words)
+		const bool bLocked = bRight ? bRightLocked : bLeftLocked;
+		const int32 Cursor = FMath::Clamp(bRight ? RightFocus : LeftFocus, 0, SelectRoster.Num() - 1);
+		const bool bYours = bRight ? (bOnline ? bLocalRight : true) : (bOnline ? bLocalLeft : true);
+		const FFBFighterRecord& Pick = SelectRoster[Cursor];
+		const FLinearColor Wash = bRight ? RightBlue : LeftRed;
+		const FString SeatName = bRight ? FString(TEXT("PLAYER 2")) : FString(TEXT("PLAYER 1"));
+		const FString StateLine = bLocked
+			? FString::Printf(TEXT("%s CONFIRMED"), *SeatName)
+			: (bYours ? FString::Printf(TEXT("CONFIRM %s"), *SeatName) : FString::Printf(TEXT("WAITING ON %s"), *SeatName));
+		TSharedRef<SScrollBox> List = SNew(SScrollBox);
+		for (int32 Index = 0; Index < SelectRoster.Num(); ++Index)
 		{
-			if (!Word.IsEmpty())
+			const bool bHere = Index == Cursor;
+			const int32 Other = bRight ? LeftFocus : RightFocus;
+			const bool bOtherLocked = bRight ? bLeftLocked : bRightLocked;
+			const bool bTaken = bOtherLocked && SelectRoster.IsValidIndex(Other) && SelectRoster[Other].Id == SelectRoster[Index].Id;
+			FString Line = SelectRoster[Index].DisplayName.ToUpper();
+			if (!SelectRoster[Index].Style.IsEmpty())
 			{
-				Out.AppendChar(Word[0]);
+				Line += TEXT("   ");
+				Line += SelectRoster[Index].Style.ToUpper();
 			}
-			if (Out.Len() >= 2)
+			if (bTaken)
 			{
-				break;
+				Line += TEXT("   TAKEN");
 			}
-		}
-		return Out.IsEmpty() ? FString(TEXT("?")) : Out.ToUpper();
-	};
-	auto Card = [&](TSharedRef<SVerticalBox> Into, const FFBFighterRecord& Fighter, const FString& CornerRole, bool bSelected, const FString& Who)
-	{
-		Into->AddSlot().AutoHeight()
-		[
-			SNew(STextBlock)
-			.Text(FText::FromString(CornerRole))
-			.Font(FBMenuArt::PosterFont(14, 80))
-			.ColorAndOpacity(Paper)
-		];
-		Into->AddSlot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-		[
-			SNew(STextBlock)
-			.Text(FText::FromString(Fighter.DisplayName.IsEmpty() ? TEXT("CHOOSE A FIGHTER") : Fighter.DisplayName.ToUpper()))
-			.Font(FBMenuArt::PosterFont(32, 40))
-			.ColorAndOpacity(Paper)
-			.AutoWrapText(true)
-		];
-		Into->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-		[
-			SNew(STextBlock)
-			.Text(FText::FromString(Fighter.Style.IsEmpty() ? Who : Fighter.Style.ToUpper()))
-			.Font(FBMenuArt::PosterFont(16, 40))
-			.ColorAndOpacity(Quiet)
-		];
-		if (bSelected)
-		{
-			Into->AddSlot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
+			else if (bHere && bLocked)
+			{
+				Line += TEXT("   CONFIRMED");
+			}
+			List->AddSlot().Padding(FMargin(0.f, 3.f))
 			[
-				SNew(STextBlock)
-				.Text(FText::FromString(TEXT("SELECTED")))
-				.Font(FBMenuArt::PosterFont(18, 80))
-				.ColorAndOpacity(Paper)
-			];
-		}
-	};
-
-	const FFBFighterRecord& LeftFighter = SelectRoster[LeftFocus];
-	const FFBFighterRecord& RightFighter = SelectRoster[RightFocus];
-	TSharedRef<SVerticalBox> LeftCard = SNew(SVerticalBox);
-	TSharedRef<SVerticalBox> RightCard = SNew(SVerticalBox);
-	FString LeftRole = TEXT("PLAYER 1");
-	FString RightRole = TEXT("PLAYER 2");
-	if (SeatMode == EFBMatchSeatMode::Online && MatchSeat == 0)
-	{
-		LeftRole += TEXT("  ·  YOU");
-	}
-	if (bLocalRight)
-	{
-		RightRole += TEXT("  ·  YOU");
-	}
-	Card(LeftCard, LeftFighter, LeftRole, bLeftLocked, TEXT("MOVING"));
-	Card(RightCard, RightFighter, RightRole, bRightLocked, TEXT("MOVING"));
-
-	TSharedRef<SUniformGridPanel> Grid = SNew(SUniformGridPanel).SlotPadding(FMargin(4.f));
-	constexpr int32 Columns = 8;
-	for (int32 Index = 0; Index < SelectRoster.Num(); ++Index)
-	{
-		const bool bP1 = Index == LeftFocus;
-		const bool bP2 = Index == RightFocus;
-		const bool bTakenLeft = bLeftLocked && Index == LeftFocus;
-		const bool bTakenRight = bRightLocked && Index == RightFocus;
-		FLinearColor Frame = FLinearColor(0.16f, 0.16f, 0.18f, 1.f);
-		if (bP1 && bP2)
-		{
-			Frame = FLinearColor(0.45f, 0.28f, 0.55f, 1.f);
-		}
-		else if (bP1)
-		{
-			Frame = LeftRed;
-		}
-		else if (bP2)
-		{
-			Frame = RightBlue;
-		}
-		const FString Mark = Initials(SelectRoster[Index].DisplayName);
-		Grid->AddSlot(Index % Columns, Index / Columns)
-		[
-			SNew(SButton)
-			.ButtonStyle(&ClearButton)
-			.OnClicked_Lambda([this, Index]()
-			{
-				const bool bRight = (SeatMode == EFBMatchSeatMode::Online && MatchSeat == 1)
-					|| (SeatMode == EFBMatchSeatMode::LocalVersus && MenuControllerId == 1);
-				if (SeatMode == EFBMatchSeatMode::Online && MatchSeat < 0)
+				SNew(SButton)
+				.ButtonStyle(&ClearButton)
+				.OnClicked_Lambda([this, Index, bRight]()
 				{
+					if (SeatMode == EFBMatchSeatMode::Online && ((MatchSeat == 1) != bRight || MatchSeat < 0))
+					{
+						return FReply::Handled();
+					}
+					MenuControllerId = bRight ? 1 : 0;
+					int32& Focus = bRight ? RightFocus : LeftFocus;
+					bool& Locked = bRight ? bRightLocked : bLeftLocked;
+					if (Locked)
+					{
+						Locked = false;
+						ServerClearSeat();
+					}
+					Focus = Index;
+					if (SeatMode == EFBMatchSeatMode::Online)
+					{
+						ServerSetHover(Index);
+					}
+					ConfirmSplitCursor();
 					return FReply::Handled();
-				}
-				int32& Cursor = bRight ? RightFocus : LeftFocus;
-				const bool bLocked = bRight ? bRightLocked : bLeftLocked;
-				if (bLocked)
-				{
-					if (bRight)
-					{
-						bRightLocked = false;
-					}
-					else
-					{
-						bLeftLocked = false;
-					}
-					ServerClearSeat();
-				}
-				Cursor = Index;
-				if (SeatMode == EFBMatchSeatMode::Online)
-				{
-					ServerSetHover(Index);
-				}
-				ConfirmSplitCursor();
-				return FReply::Handled();
-			})
-			[
-				SNew(SBorder)
-				.BorderImage(White)
-				.BorderBackgroundColor(Frame)
-				.Padding(FMargin(bP1 || bP2 ? 3.f : 1.f))
+				})
 				[
-					SNew(SBox)
-					.WidthOverride(96.f)
-					.HeightOverride(72.f)
+					SNew(SBorder)
+					.BorderImage(White)
+					.BorderBackgroundColor(bHere ? Paper : FLinearColor(0.f, 0.f, 0.f, 0.28f))
+					.Padding(FMargin(12.f, 8.f))
 					[
-						SNew(SBorder)
-						.BorderImage(White)
-						.BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.09f, 1.f))
-						.HAlign(HAlign_Center)
-						.VAlign(VAlign_Center)
-						[
-							SNew(STextBlock)
-							.Text(FText::FromString(bTakenLeft || bTakenRight ? TEXT("OK") : Mark))
-							.Font(FBMenuArt::PosterFont(18, 40))
-							.ColorAndOpacity(Paper)
-						]
+						SNew(STextBlock)
+						.Text(FText::FromString(Line))
+						.Font(FBMenuArt::PosterFont(bHere ? 18 : 15, 16))
+						.ColorAndOpacity(bHere ? FLinearColor(0.08f, 0.05f, 0.05f, 1.f) : Paper)
 					]
 				]
-			]
-		];
-	}
-
-	TSharedRef<SHorizontalBox> BottomBar = SNew(SHorizontalBox);
-	BottomBar->AddSlot().FillWidth(1.f).VAlign(VAlign_Center)
+			];
+		}
+		return SNew(SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(Wash)
+			.Padding(FMargin(20.f, 16.f))
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(SeatName))
+					.Font(FBMenuArt::PosterFont(36, 60))
+					.ColorAndOpacity(Paper)
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(bYours ? TEXT("YOUR CONFIRM") : TEXT("OTHER PLAYER")))
+					.Font(FBMenuArt::PosterFont(14, 80))
+					.ColorAndOpacity(Paper)
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 8.f)
+				[
+					SNew(SBorder)
+					.BorderImage(White)
+					.BorderBackgroundColor(bLocked ? Paper : FLinearColor(0.f, 0.f, 0.f, 0.35f))
+					.Padding(FMargin(12.f, 10.f))
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(StateLine))
+						.Font(FBMenuArt::PosterFont(20, 40))
+						.ColorAndOpacity(bLocked ? Wash : Paper)
+					]
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(Pick.DisplayName.ToUpper()))
+					.Font(FBMenuArt::PosterFont(22, 20))
+					.ColorAndOpacity(Paper)
+					.AutoWrapText(true)
+				]
+				+ SVerticalBox::Slot().FillHeight(1.f)
+				[
+					List
+				]
+			];
+	};
+	const TSharedRef<SWidget> LeftColumn = MakeSeatColumn(false);
+	const TSharedRef<SWidget> RightColumn = MakeSeatColumn(true);
+	const FString CenterLine = (bLeftLocked && bRightLocked
+		&& FFBFighterBalance::ClassForDivision(SelectRoster[LeftFocus].Division) != FFBFighterBalance::ClassForDivision(SelectRoster[RightFocus].Division))
+		? FString(TEXT("Same weight class required."))
+		: SelectStatus;
+	TSharedRef<SVerticalBox> CenterStack = SNew(SVerticalBox);
+	CenterStack->AddSlot().AutoHeight().HAlign(HAlign_Center)
 	[
 		SNew(STextBlock)
-		.Text(FText::FromString([&]()
-		{
-			FString Footer = TEXT("Choose a fighter");
-			if (!SelectStatus.IsEmpty())
-			{
-				Footer += TEXT("     ");
-				Footer += SelectStatus;
-			}
-			if (bLeftLocked && bRightLocked
-				&& FFBFighterBalance::ClassForDivision(LeftFighter.Division) != FFBFighterBalance::ClassForDivision(RightFighter.Division))
-			{
-				Footer += TEXT("     Same weight class required.");
-			}
-			return Footer;
-		}()))
-		.Font(FBMenuArt::PosterFont(16, 20))
+		.Text(FText::FromString(FString::Printf(TEXT("VERSION %s"), FBBuild::Label)))
+		.Font(FBMenuArt::PosterFont(22, 40))
 		.ColorAndOpacity(Paper)
 	];
-	if (bLeftLocked && bRightLocked && !bLocalRight)
+	CenterStack->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 8.f, 0.f, 0.f)
+	[
+		SNew(STextBlock)
+		.Text(FText::FromString(bLeftLocked ? TEXT("PLAYER 1 CONFIRMED") : TEXT("PLAYER 1 OPEN")))
+		.Font(FBMenuArt::PosterFont(16, 30))
+		.ColorAndOpacity(bLeftLocked ? Paper : Quiet)
+	];
+	CenterStack->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 4.f, 0.f, 0.f)
+	[
+		SNew(STextBlock)
+		.Text(FText::FromString(bRightLocked ? TEXT("PLAYER 2 CONFIRMED") : TEXT("PLAYER 2 OPEN")))
+		.Font(FBMenuArt::PosterFont(16, 30))
+		.ColorAndOpacity(bRightLocked ? Paper : Quiet)
+	];
+	if (!CenterLine.IsEmpty())
 	{
-		BottomBar->AddSlot().AutoWidth().Padding(12.f, 0.f, 0.f, 0.f)
+		CenterStack->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 10.f, 0.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(CenterLine))
+			.Font(FBMenuArt::PosterFont(13, 16))
+			.ColorAndOpacity(Quiet)
+			.AutoWrapText(true)
+			.Justification(ETextJustify::Center)
+		];
+	}
+	if (bLeftLocked && bRightLocked && bLocalLeft)
+	{
+		CenterStack->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0.f, 16.f, 0.f, 0.f)
 		[
 			SNew(SButton)
 			.ButtonStyle(&ClearButton)
@@ -1554,24 +1539,14 @@ void AFBSparringPlayerController::RebuildSplitSelect()
 				SNew(SBorder)
 				.BorderImage(White)
 				.BorderBackgroundColor(Paper)
-				.Padding(FMargin(18.f, 8.f))
+				.Padding(FMargin(22.f, 10.f))
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(TEXT("FIGHT")))
-					.Font(FBMenuArt::PosterFont(18, 60))
-					.ColorAndOpacity(FLinearColor(0.05f, 0.05f, 0.05f, 1.f))
+					.Font(FBMenuArt::PosterFont(22, 60))
+					.ColorAndOpacity(FLinearColor(0.08f, 0.05f, 0.05f, 1.f))
 				]
 			]
-		];
-	}
-	else if (bLocalRight)
-	{
-		BottomBar->AddSlot().AutoWidth()
-		[
-			SNew(STextBlock)
-			.Text(FText::FromString(bRightLocked ? TEXT("Waiting for player 1 to start") : TEXT("Confirm your fighter")))
-			.Font(FBMenuArt::PosterFont(14, 20))
-			.ColorAndOpacity(Quiet)
 		];
 	}
 
@@ -1582,54 +1557,32 @@ void AFBSparringPlayerController::RebuildSplitSelect()
 	}
 	FighterSelectWidget = WrapForPad(SNew(SConstraintCanvas)
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.f, 0.f, 0.5f, 0.72f))
+		.Anchors(FAnchors(0.f, 0.f, 1.f, 1.f))
 		[
 			SNew(SBorder)
 			.BorderImage(White)
-			.BorderBackgroundColor(LeftRed)
-			.Padding(FMargin(36.f, 28.f))
-			[
-				LeftCard
-			]
+			.BorderBackgroundColor(FLinearColor(0.03f, 0.03f, 0.04f, 1.f))
 		]
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.5f, 0.f, 1.f, 0.72f))
+		.Anchors(FAnchors(0.015f, 0.02f, 0.40f, 0.98f))
+		[
+			LeftColumn
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.60f, 0.02f, 0.985f, 0.98f))
+		[
+			RightColumn
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.41f, 0.08f, 0.59f, 0.42f))
 		[
 			SNew(SBorder)
 			.BorderImage(White)
-			.BorderBackgroundColor(RightBlue)
-			.Padding(FMargin(36.f, 28.f))
+			.BorderBackgroundColor(FLinearColor(0.10f, 0.09f, 0.08f, 1.f))
+			.Padding(FMargin(12.f, 14.f))
 			[
-				RightCard
+				CenterStack
 			]
-		]
-		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.04f, 0.74f, 0.96f, 0.96f))
-		[
-			SNew(SBorder)
-			.BorderImage(White)
-			.BorderBackgroundColor(FLinearColor(0.05f, 0.05f, 0.06f, 0.92f))
-			.Padding(FMargin(12.f))
-			[
-				SNew(SVerticalBox)
-				+ SVerticalBox::Slot().FillHeight(1.f)
-				[
-					Grid
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
-				[
-					BottomBar
-				]
-			]
-		]
-		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.04f, 0.965f, 0.5f, 1.f))
-		.Alignment(FVector2D(0.f, 0.f))
-		[
-			SNew(STextBlock)
-			.Text(FText::FromString(FString::Printf(TEXT("FINAL BELL  %s"), FBBuild::Label)))
-			.Font(FBMenuArt::PosterFont(12, 40))
-			.ColorAndOpacity(Quiet)
 		]);
 	LocalViewport()->AddViewportWidgetContent(FighterSelectWidget.ToSharedRef(), 100);
 	bFighterSelectVisible = true;
