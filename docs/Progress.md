@@ -1,5 +1,17 @@
 # Final Bell — Progress Log
 
+## 2026-10-21 — Player 2 can confirm in a private match
+
+The guest is player 2, and that seat is assigned before login turns them into a spectator. Player 1 confirms the left fighter. Player 2 confirms the right fighter. The host starts the bout after both confirms. Play was not run.
+
+## 2026-10-21 — One packaged build with Online Private Match
+
+`FinalBell Win64 Development` finished with `Result: Succeeded`. That executable is the program inside `apps/game-unreal/FinalBell-Package.zip` (about 1.31 GB). The zip also contains the launcher, the pak, and the engine files. Play was not run.
+
+## 2026-10-21 — Online Private Match on the ring menu
+
+The menu that lists 1V1 Multiplayer now also lists Online Private Match. That row hosts a match or joins an address. 1V1 Multiplayer stays the same-computer match. The copied address prefers a Tailscale `100.64` address when one is present. A new package is required before the zip shows the row. Play was not run.
+
 ## 2026-10-21 — Bluetooth pads beside USB DualSense
 
 `DefaultInput.ini` no longer keeps only the first GameInput device of a kind. A Bluetooth controller can be used on its own or while a PS5 pad is plugged in over USB. The USB DualSense button map is unchanged. Pair the wireless pad in Windows before opening the editor. Play was not run with a Bluetooth controller.

@@ -20,6 +20,8 @@ public:
 	void OpenFrontEnd(UObject* ContextObject);
 	static void TravelToFrontEnd(UObject* ContextObject);
 	void NotifyFrontEndArrived();
+	/** A private-match travel must stay on the ring. The next map load does not open the front end again. */
+	void KeepMatchWorld() { bFrontEndBootHandled = true; }
 
 	void SetSeatMode(EFBMatchSeatMode Mode);
 	EFBMatchSeatMode GetSeatMode() const { return SeatMode; }

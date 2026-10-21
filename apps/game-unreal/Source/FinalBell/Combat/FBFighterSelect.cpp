@@ -672,11 +672,15 @@ void AFBSparringPlayerController::ShowFighterSelect()
 	}
 	if (bOpening && SeatMode == EFBMatchSeatMode::Online)
 	{
-		if (UGameInstance* GI = GetGameInstance())
+		if (MatchSeat == 1)
+		{
+			SelectStatus = TEXT("You are player 2. Confirm the fighter on the right.");
+		}
+		else if (UGameInstance* GI = GetGameInstance())
 		{
 			if (UFBPrivateRoomSubsystem* Rooms = GI->GetSubsystem<UFBPrivateRoomSubsystem>())
 			{
-				SelectStatus = FString::Printf(TEXT("Share %s. The other player pastes that address."), *Rooms->GetShareToken());
+				SelectStatus = FString::Printf(TEXT("You are player 1. Share %s. Confirm the fighter on the left."), *Rooms->GetShareToken());
 			}
 		}
 	}

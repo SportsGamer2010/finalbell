@@ -7,6 +7,7 @@
 #include "Combat/FBTacticalTypes.h"
 #include "InputCoreTypes.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "FBSparringPlayerController.generated.h"
 
@@ -77,6 +78,9 @@ public:
 protected:
 	void ShowModeMenu();
 	void HideModeMenu();
+	void ShowOnlineMenu(bool bJoin);
+	void ActivateOnlineRow();
+	void CloseOnlineMenu();
 	void ChooseMode(EFBPlayMode Mode);
 	void ShowFighterSelect();
 	void HideFighterSelect();
@@ -161,6 +165,14 @@ protected:
 	TSharedPtr<SWidget> FightMeters;
 	TSharedPtr<SWidget> BoutOverlay;
 	bool bModeMenuVisible = false;
+	bool bOnlineMenuVisible = false;
+	bool bOnlineJoin = false;
+	FString OnlineAddressText;
+	FString OnlineStatus;
+	TArray<EFBPlayMode> PosterModes;
+	TArray<bool> PosterOpensOnline;
+	TArray<uint8> OnlineActions;
+	TSharedPtr<SEditableTextBox> OnlineAddressBox;
 	bool bReturningToMenu = false;
 	bool bFighterSelectVisible = false;
 	bool bPauseOpen = false;

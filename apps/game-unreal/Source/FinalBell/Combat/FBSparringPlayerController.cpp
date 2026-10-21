@@ -43,6 +43,7 @@
 #include "Styling/CoreStyle.h"
 #include "Brushes/SlateColorBrush.h"
 #include "GenericPlatform/GenericPlatformMisc.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Kismet/GameplayStatics.h"
 
 class SFBMenuBridge : public SCompoundWidget
@@ -681,7 +682,10 @@ void AFBSparringPlayerController::ShowModeMenu()
 
 	bShowMouseCursor = true;
 	ModeRows.Reset();
-	ModeFocus = FMath::Clamp(ModeFocus, 0, 3);
+	PosterModes.Reset();
+	PosterOpensOnline.Reset();
+	bOnlineMenuVisible = false;
+	bOnlineJoin = false;
 
 	const FLinearColor Paper = FBMenuArt::Paper();
 	const FLinearColor Accent = FBMenuArt::Accent();
@@ -705,11 +709,13 @@ void AFBSparringPlayerController::ShowModeMenu()
 	{
 		const TCHAR* Label;
 		EFBPlayMode Mode;
+		bool bOnline;
 	} Choices[] = {
-		{ TEXT("1V1 SPARRING (AI)"), EFBPlayMode::VersusAI },
-		{ TEXT("1V1 MULTIPLAYER"), EFBPlayMode::Multiplayer },
-		{ TEXT("HEAVY BAG TRAINING"), EFBPlayMode::Training },
-		{ TEXT("1V1 CAREER"), EFBPlayMode::Career }
+		{ TEXT("1V1 SPARRING (AI)"), EFBPlayMode::VersusAI, false },
+		{ TEXT("1V1 MULTIPLAYER"), EFBPlayMode::Multiplayer, false },
+		{ TEXT("ONLINE PRIVATE MATCH"), EFBPlayMode::Unset, true },
+		{ TEXT("HEAVY BAG TRAINING"), EFBPlayMode::Training, false },
+		{ TEXT("1V1 CAREER"), EFBPlayMode::Career, false }
 	};
 
 	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
@@ -745,6 +751,9 @@ void AFBSparringPlayerController::ShowModeMenu()
 				]
 			];
 		const EFBPlayMode Mode = Choices[Index].Mode;
+		const bool bOnline = Choices[Index].bOnline;
+		PosterModes.Add(Mode);
+		PosterOpensOnline.Add(bOnline);
 		List->AddSlot().AutoHeight().Padding(0.f, 5.f)
 		[
 			SNew(SButton)
@@ -754,9 +763,17 @@ void AFBSparringPlayerController::ShowModeMenu()
 				ModeFocus = Index;
 				PaintChrome(ModeRows, ModeFocus);
 			})
-			.OnClicked_Lambda([this, Mode]()
+			.OnClicked_Lambda([this, Index]()
 			{
-				ChooseMode(Mode);
+				ModeFocus = Index;
+				if (PosterOpensOnline.IsValidIndex(Index) && PosterOpensOnline[Index])
+				{
+					ShowOnlineMenu(false);
+				}
+				else if (PosterModes.IsValidIndex(Index))
+				{
+					ChooseMode(PosterModes[Index]);
+				}
 				return FReply::Handled();
 			})
 			[
@@ -765,6 +782,7 @@ void AFBSparringPlayerController::ShowModeMenu()
 		];
 		ModeRows.Add(Row);
 	}
+	ModeFocus = FMath::Clamp(ModeFocus, 0, FMath::Max(0, ModeRows.Num() - 1));
 	PaintChrome(ModeRows, ModeFocus);
 
 	ModeMenuWidget = WrapForPad(SNew(SConstraintCanvas)
@@ -853,6 +871,265 @@ void AFBSparringPlayerController::HideModeMenu()
 	{
 		RestoreFightMapping();
 	}
+}
+
+void AFBSparringPlayerController::ShowOnlineMenu(bool bJoin)
+{
+	if (!GEngine || !LocalViewport())
+	{
+		return;
+	}
+	const int32 KeptFocus = bOnlineMenuVisible ? ModeFocus : 0;
+	if (ModeMenuWidget.IsValid())
+	{
+		LocalViewport()->RemoveViewportWidgetContent(ModeMenuWidget.ToSharedRef());
+		ModeMenuWidget.Reset();
+	}
+	ModeRows.Reset();
+	OnlineActions.Reset();
+	OnlineAddressBox.Reset();
+	bOnlineMenuVisible = true;
+	bOnlineJoin = bJoin;
+	bShowMouseCursor = true;
+
+	const FLinearColor Paper = FBMenuArt::Paper();
+	const FLinearColor Accent = FBMenuArt::Accent();
+	const FLinearColor Quiet = FBMenuArt::Quiet();
+	const FSlateBrush* White = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
+	static FButtonStyle ClearButton = []()
+	{
+		FButtonStyle Style;
+		const FSlateColorBrush Clear(FLinearColor::Transparent);
+		Style.SetNormal(Clear);
+		Style.SetHovered(Clear);
+		Style.SetPressed(Clear);
+		Style.SetDisabled(Clear);
+		Style.NormalPadding = FMargin(0.f);
+		Style.PressedPadding = FMargin(0.f);
+		return Style;
+	}();
+
+	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
+	auto AddRow = [this, &List, Quiet, White](const FString& Label, uint8 Action)
+	{
+		FFBRowChrome Row;
+		SAssignNew(Row.Fill, SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(FLinearColor::Transparent)
+			.Padding(FMargin(0.f))
+			[
+				SNew(SBox)
+				.HeightOverride(52.f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Fill).Padding(0.f, 10.f, 14.f, 10.f)
+					[
+						SNew(SBox)
+						.WidthOverride(4.f)
+						[
+							SAssignNew(Row.Tick, SBorder)
+							.BorderImage(White)
+							.BorderBackgroundColor(FLinearColor::Transparent)
+						]
+					]
+					+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center).Padding(4.f, 0.f, 18.f, 0.f)
+					[
+						SAssignNew(Row.Label, STextBlock)
+						.Text(FText::FromString(Label))
+						.Font(FBMenuArt::PosterFont(22, 140))
+						.ColorAndOpacity(Quiet)
+					]
+				]
+			];
+		const int32 Index = OnlineActions.Num();
+		OnlineActions.Add(Action);
+		List->AddSlot().AutoHeight().Padding(0.f, 5.f)
+		[
+			SNew(SButton)
+			.ButtonStyle(&ClearButton)
+			.OnHovered_Lambda([this, Index]()
+			{
+				ModeFocus = Index;
+				PaintChrome(ModeRows, ModeFocus);
+			})
+			.OnClicked_Lambda([this, Index]()
+			{
+				ModeFocus = Index;
+				ActivateOnlineRow();
+				return FReply::Handled();
+			})
+			[
+				Row.Fill.ToSharedRef()
+			]
+		];
+		ModeRows.Add(Row);
+	};
+
+	if (bJoin)
+	{
+		List->AddSlot().AutoHeight().Padding(0.f, 8.f, 0.f, 12.f)
+		[
+			SAssignNew(OnlineAddressBox, SEditableTextBox)
+			.Text(FText::FromString(OnlineAddressText))
+			.HintText(FText::FromString(TEXT("100.x.y.z:7777")))
+			.OnTextChanged_Lambda([this](const FText& Text)
+			{
+				OnlineAddressText = Text.ToString();
+			})
+		];
+		AddRow(TEXT("PASTE ADDRESS"), 3);
+		AddRow(TEXT("JOIN"), 4);
+		AddRow(TEXT("BACK"), 2);
+	}
+	else
+	{
+		AddRow(TEXT("HOST MATCH"), 0);
+		AddRow(TEXT("JOIN MATCH"), 1);
+		AddRow(TEXT("BACK"), 2);
+	}
+
+	const FString Body = bJoin
+		? TEXT("Paste the address your friend sent. It looks like 100.64.0.2:7777.")
+		: TEXT("You host. Your friend joins with the address copied to the clipboard.");
+	ModeFocus = FMath::Clamp(KeptFocus, 0, FMath::Max(0, ModeRows.Num() - 1));
+	PaintChrome(ModeRows, ModeFocus);
+
+	ModeMenuWidget = WrapForPad(SNew(SConstraintCanvas)
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.f, 0.f, 1.f, 1.f))
+		.Offset(FMargin(0.f))
+		[
+			SNew(SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(FLinearColor(0.012f, 0.014f, 0.018f, 1.f))
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.f, 0.f, 1.f, 1.f))
+		.Offset(FMargin(0.f))
+		[
+			SNew(SScaleBox)
+			.Stretch(EStretch::ScaleToFill)
+			[
+				SNew(SImage)
+				.Image(FBMenuArt::GetArenaBrush())
+			]
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.06f, 0.11f, 0.62f, 0.9f))
+		.Offset(FMargin(0.f))
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("ONLINE PRIVATE MATCH")))
+				.Font(FBMenuArt::PosterFont(42, 160))
+				.ColorAndOpacity(Paper)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 18.f)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(Body))
+				.Font(FBMenuArt::PosterFont(16, 40))
+				.ColorAndOpacity(Quiet)
+				.AutoWrapText(true)
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				List
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 16.f, 0.f, 0.f)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(OnlineStatus))
+				.Font(FBMenuArt::PosterFont(16, 40))
+				.ColorAndOpacity(Accent)
+				.AutoWrapText(true)
+			]
+		]);
+
+	LocalViewport()->AddViewportWidgetContent(ModeMenuWidget.ToSharedRef(), 100);
+	bModeMenuVisible = true;
+	TSharedPtr<SWidget> FocusTarget = ModeMenuWidget;
+	if (bJoin && OnlineAddressBox.IsValid())
+	{
+		FocusTarget = OnlineAddressBox;
+	}
+	FocusMenuWidget(FocusTarget);
+}
+
+void AFBSparringPlayerController::ActivateOnlineRow()
+{
+	const uint8 Action = OnlineActions.IsValidIndex(ModeFocus) ? OnlineActions[ModeFocus] : static_cast<uint8>(2);
+	UGameInstance* GI = GetGameInstance();
+	UFBPrivateRoomSubsystem* Rooms = GI ? GI->GetSubsystem<UFBPrivateRoomSubsystem>() : nullptr;
+	switch (Action)
+	{
+	case 0:
+		if (!Rooms || !Rooms->HostListenServer(7777))
+		{
+			OnlineStatus = TEXT("The match could not be hosted.");
+			ShowOnlineMenu(false);
+			return;
+		}
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 20.f, FColor::Green, FString::Printf(TEXT("Share %s"), *Rooms->GetShareToken()));
+		}
+		return;
+	case 1:
+		OnlineStatus.Reset();
+		ShowOnlineMenu(true);
+		return;
+	case 3:
+	{
+		FString Pasted;
+		FPlatformApplicationMisc::ClipboardPaste(Pasted);
+		Pasted.TrimStartAndEndInline();
+		if (Pasted.IsEmpty())
+		{
+			OnlineStatus = TEXT("Copy the address first, then paste it here.");
+		}
+		else
+		{
+			OnlineAddressText = Pasted;
+			OnlineStatus = FString::Printf(TEXT("Pasted %s"), *Pasted);
+		}
+		ShowOnlineMenu(true);
+		return;
+	}
+	case 4:
+	{
+		const FString Address = OnlineAddressText.TrimStartAndEnd();
+		if (Address.IsEmpty() || !Rooms || !Rooms->JoinByAddress(Address, 7777))
+		{
+			OnlineStatus = TEXT("Paste the address your friend sent, like 100.64.0.2:7777.");
+			ShowOnlineMenu(true);
+			return;
+		}
+		return;
+	}
+	default:
+		CloseOnlineMenu();
+		return;
+	}
+}
+
+void AFBSparringPlayerController::CloseOnlineMenu()
+{
+	bOnlineMenuVisible = false;
+	bOnlineJoin = false;
+	OnlineAddressText.Reset();
+	OnlineStatus.Reset();
+	OnlineAddressBox.Reset();
+	if (ModeMenuWidget.IsValid() && GEngine && LocalViewport())
+	{
+		LocalViewport()->RemoveViewportWidgetContent(ModeMenuWidget.ToSharedRef());
+	}
+	ModeMenuWidget.Reset();
+	ModeRows.Reset();
+	bModeMenuVisible = false;
+	ShowModeMenu();
 }
 
 void AFBSparringPlayerController::ChooseMode(EFBPlayMode Mode)
@@ -1294,7 +1571,11 @@ void AFBSparringPlayerController::OnRep_MatchSeat()
 {
 	if (SeatMode == EFBMatchSeatMode::Online && bFighterSelectVisible)
 	{
-		ActiveSide = MatchSeat == 0 ? 0 : 1;
+		ActiveSide = MatchSeat == 1 ? 1 : 0;
+		if (MatchSeat == 1)
+		{
+			SelectStatus = TEXT("You are player 2. Confirm the fighter on the right.");
+		}
 		RebuildFighterSelect();
 	}
 }
@@ -1613,10 +1894,22 @@ void AFBSparringPlayerController::ActivateMenu()
 		ActivateSelectRow();
 		return;
 	}
+	if (bOnlineMenuVisible)
+	{
+		ActivateOnlineRow();
+		return;
+	}
 	if (bModeMenuVisible)
 	{
-		const EFBPlayMode Modes[] = { EFBPlayMode::VersusAI, EFBPlayMode::Multiplayer, EFBPlayMode::Training, EFBPlayMode::Career };
-		ChooseMode(Modes[FMath::Clamp(ModeFocus, 0, UE_ARRAY_COUNT(Modes) - 1)]);
+		if (PosterOpensOnline.IsValidIndex(ModeFocus) && PosterOpensOnline[ModeFocus])
+		{
+			ShowOnlineMenu(false);
+			return;
+		}
+		if (PosterModes.IsValidIndex(ModeFocus))
+		{
+			ChooseMode(PosterModes[ModeFocus]);
+		}
 	}
 }
 
@@ -1684,6 +1977,17 @@ void AFBSparringPlayerController::BackMenu(bool bFromOptions)
 		}
 		HideFighterSelect();
 		ShowModeMenu();
+		return;
+	}
+	if (bOnlineMenuVisible && !bFromOptions)
+	{
+		if (bOnlineJoin)
+		{
+			OnlineStatus.Reset();
+			ShowOnlineMenu(false);
+			return;
+		}
+		CloseOnlineMenu();
 		return;
 	}
 	if (bModeMenuVisible && !bFromOptions)

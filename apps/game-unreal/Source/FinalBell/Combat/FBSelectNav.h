@@ -33,6 +33,20 @@ struct FFBSelectNav
 		return Rows[Slot];
 	}
 
+	/** 0 is the host, 1 is the guest. INDEX_NONE means the match is full. */
+	static int32 NextMatchSeat(bool bSeat0Taken, bool bSeat1Taken)
+	{
+		if (!bSeat0Taken)
+		{
+			return 0;
+		}
+		if (!bSeat1Taken)
+		{
+			return 1;
+		}
+		return INDEX_NONE;
+	}
+
 	static int32 FirstOnSide(const TArray<int32>& Sides, int32 Side)
 	{
 		for (int32 Index = 0; Index < Sides.Num(); ++Index)

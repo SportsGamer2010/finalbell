@@ -7,6 +7,44 @@
 #include "IPAddress.h"
 #include "OnlineSubsystem.h"
 #include "Interfaces/OnlineIdentityInterface.h"
+#include "Session/FBSessionSubsystem.h"
+#include "UI/FBGameInstance.h"
+#include "HAL/PlatformApplicationMisc.h"
+
+namespace
+{
+	bool IsTailscaleAddress(const FString& Host)
+	{
+		TArray<FString> Parts;
+		Host.ParseIntoArray(Parts, TEXT("."), true);
+		if (Parts.Num() != 4 || Parts[0] != TEXT("100"))
+		{
+			return false;
+		}
+		const int32 Second = FCString::Atoi(*Parts[1]);
+		return Second >= 64 && Second <= 127;
+	}
+
+	void PreparePrivateTravel(UGameInstance* GI)
+	{
+		if (!GI)
+		{
+			return;
+		}
+		if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GI))
+		{
+			FrontEnd->KeepMatchWorld();
+			FrontEnd->SetSeatMode(EFBMatchSeatMode::Online);
+			FrontEnd->ClearPendingBout();
+			FrontEnd->SetOpenFighterSelect(true);
+			FrontEnd->SetCareerFighterSelect(false);
+		}
+		if (UFBSessionSubsystem* Session = GI->GetSubsystem<UFBSessionSubsystem>())
+		{
+			Session->ClearPlayMode();
+		}
+	}
+}
 
 FString UFBPrivateRoomSubsystem::GenerateRoomCode() const
 {
@@ -25,6 +63,36 @@ FString UFBPrivateRoomSubsystem::GetPreferredHostAddress() const
 	if (!Sockets)
 	{
 		return TEXT("127.0.0.1");
+	}
+
+	TArray<TSharedPtr<FInternetAddr>> Addresses;
+	FString Fallback;
+	if (Sockets->GetLocalAdapterAddresses(Addresses))
+	{
+		for (const TSharedPtr<FInternetAddr>& Addr : Addresses)
+		{
+			if (!Addr.IsValid() || !Addr->IsValid())
+			{
+				continue;
+			}
+			const FString Host = Addr->ToString(false);
+			if (Host.IsEmpty() || Host == TEXT("127.0.0.1") || Host == TEXT("0.0.0.0") || Host.Contains(TEXT(":")))
+			{
+				continue;
+			}
+			if (IsTailscaleAddress(Host))
+			{
+				return Host;
+			}
+			if (Fallback.IsEmpty())
+			{
+				Fallback = Host;
+			}
+		}
+	}
+	if (!Fallback.IsEmpty())
+	{
+		return Fallback;
 	}
 
 	bool bCanBindAll = false;
@@ -144,8 +212,10 @@ bool UFBPrivateRoomSubsystem::HostListenServer(int32 Port)
 		return false;
 	}
 
+	PreparePrivateTravel(GetGameInstance());
 	CreatePrivateRoom();
 	ActiveRoom.Port = Port > 0 ? Port : 7777;
+	FPlatformApplicationMisc::ClipboardCopy(*GetShareToken());
 
 	const FString TravelURL = TEXT("/Game/Maps/Ring_P1?listen");
 	UE_LOG(LogTemp, Warning, TEXT("FinalBell HostListenServer travel: %s (tell partner FBJoin %s port %d)"),
@@ -169,6 +239,7 @@ bool UFBPrivateRoomSubsystem::JoinByAddress(const FString& HostAddress, int32 Po
 	ActiveRoom.HostAddress = Host;
 	ActiveRoom.Port = ResolvedPort;
 	ActiveRoom.bRanked = false;
+	PreparePrivateTravel(GetGameInstance());
 
 	UWorld* World = GetWorld();
 	if (!World)

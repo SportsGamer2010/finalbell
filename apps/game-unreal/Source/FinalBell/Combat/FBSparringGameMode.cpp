@@ -6,6 +6,7 @@
 #include "Ring/FBRingBounds.h"
 #include "Combat/FBSparringGameState.h"
 #include "Combat/FBSparringPlayerController.h"
+#include "Combat/FBSelectNav.h"
 #include "Combat/FBCombatTypes.h"
 #include "Ring/FBP1ArenaBootstrap.h"
 #include "Camera/FBBroadcastCamera.h"
@@ -73,7 +74,7 @@ void AFBSparringGameMode::BeginPlay()
 
 void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 {
-	Super::PostLogin(NewPlayer);
+	bool bMatchFull = false;
 	if (AFBSparringPlayerController* PC = Cast<AFBSparringPlayerController>(NewPlayer))
 	{
 		if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
@@ -81,16 +82,42 @@ void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 			const EFBMatchSeatMode SeatMode = FrontEnd->GetSeatMode();
 			if (SeatMode == EFBMatchSeatMode::Online || SeatMode == EFBMatchSeatMode::LocalVersus)
 			{
-				const int32 Count = GetNumPlayers();
-				if (Count > 2)
+				// Seat is chosen before Super::PostLogin. That call turns the guest into a
+				// spectator, and GetNumPlayers then skips them, so both people were player 1.
+				bool bSeat0 = false;
+				bool bSeat1 = false;
+				if (UWorld* World = GetWorld())
 				{
-					PC->ClientMatchClosed(TEXT("This private match already has two players."));
+					for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+					{
+						const AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get());
+						if (!Other || Other == PC)
+						{
+							continue;
+						}
+						bSeat0 |= Other->GetMatchSeat() == 0;
+						bSeat1 |= Other->GetMatchSeat() == 1;
+					}
+				}
+				const int32 Seat = FFBSelectNav::NextMatchSeat(bSeat0, bSeat1);
+				if (Seat == INDEX_NONE)
+				{
+					bMatchFull = true;
 				}
 				else
 				{
-					PC->AssignMatchSeat(Count <= 1 ? 0 : 1);
+					PC->AssignMatchSeat(Seat);
+					PC->ForceNetUpdate();
 				}
 			}
+		}
+	}
+	Super::PostLogin(NewPlayer);
+	if (bMatchFull)
+	{
+		if (AFBSparringPlayerController* PC = Cast<AFBSparringPlayerController>(NewPlayer))
+		{
+			PC->ClientMatchClosed(TEXT("This private match already has two players."));
 		}
 	}
 	if (bAutoBuildP1Arena && !bArenaBuilt)

@@ -24,6 +24,9 @@ bool FFBSelectNavContainmentTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("An online guest's first controller edits network seat 2"), FFBSelectNav::PanelForDevice(EFBMatchSeatMode::Online, 1, 0, false, 0), 1);
 	TestEqual(TEXT("An online host's controller edits the left panel"), FFBSelectNav::PanelForDevice(EFBMatchSeatMode::Online, 0, 1, false, 0), 0);
 	TestEqual(TEXT("Online input waits until the server assigns a seat"), FFBSelectNav::PanelForDevice(EFBMatchSeatMode::Online, -1, 0, false, 0), INDEX_NONE);
+	TestEqual(TEXT("The first online player is player 1"), FFBSelectNav::NextMatchSeat(false, false), 0);
+	TestEqual(TEXT("The joining online player is player 2"), FFBSelectNav::NextMatchSeat(true, false), 1);
+	TestEqual(TEXT("A full private match has no seat"), FFBSelectNav::NextMatchSeat(true, true), INDEX_NONE);
 
 	TestTrue(TEXT("Local mouse stays on the left"), FFBSelectNav::AllowsPointer(EFBMatchSeatMode::LocalVersus, 0, 0, 0));
 	TestFalse(TEXT("Local mouse cannot edit player 2"), FFBSelectNav::AllowsPointer(EFBMatchSeatMode::LocalVersus, 0, 1, 1));

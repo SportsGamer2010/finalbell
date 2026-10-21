@@ -34,8 +34,8 @@ Your friend unzips the folder and runs `FinalBell.exe`. Unreal Editor is not req
 
 ## Host, share, and join
 
-1. Both people use the same zip.
-2. The host opens the game, chooses Online Private Match, then Host Match.
+1. Both people use the same zip. The ring menu must list **ONLINE PRIVATE MATCH**. A build that only lists 1V1 Multiplayer is the older menu.
+2. The host opens the game, chooses **ONLINE PRIVATE MATCH**, then **HOST MATCH**.
 3. The game copies `host:port` to the clipboard and opens fighter select. Read that address from the status line if the clipboard was overwritten.
 4. The friend opens Join Match, pastes the address, and chooses Join.
 5. The host is the left fighter. The friend is the right fighter. Each person confirms only their own side. The host starts the bout after both confirms.
