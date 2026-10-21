@@ -71,14 +71,18 @@ def build_league(
     *,
     confident: bool,
     names_trusted: bool,
+    roster: list[str] | None = None,
 ) -> list[ClipPlan]:
     usable = _usable(meta, moments)
     allowed = [moment for moment in usable if moment.kind == "allowed"]
     highlights = [
-        moment for moment in usable if moment.kind != "allowed" and moment.kind not in STAT_KINDS
+        moment
+        for moment in usable
+        if moment.kind not in {"allowed", "featured"} and moment.kind not in STAT_KINDS
     ]
     stat_plays = [moment for moment in usable if moment.player and moment.kind in PLAYER_REEL_KINDS]
-    if not highlights and not allowed and not stat_plays:
+    roster_names = [name for name in (roster or []) if name]
+    if not highlights and not allowed and not stat_plays and not roster_names:
         return []
     parsed = parse_title(meta.title)
     source = _source(meta)
@@ -116,11 +120,19 @@ def build_league(
     grouped: dict[str, list[Moment]] = {}
     for moment in stat_plays:
         grouped.setdefault(moment.player, []).append(moment)
-    for player, owned in grouped.items():
-        packed = pack_moments(owned, 240)
-        if not packed:
-            continue
-        lines = player_lines(player, packed)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in roster_names + list(grouped):
+        if name and name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    for player in ordered:
+        owned = grouped.get(player, [])
+        packed = pack_moments(owned, 240) if owned else []
+        if packed:
+            lines = player_lines(player, packed)
+        else:
+            lines = [player, "ON THE ROSTER.", "2K Comp League."]
         plans.append(
             make_plan(
                 slug="player-" + _slug(player),

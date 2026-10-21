@@ -121,7 +121,12 @@ def player_lines(name: str, moments: list) -> list[str]:
     dunks = notes.count("DUNK")
     if dunks:
         chips.insert(0, f"{dunks} DUNK")
-    line = "  ".join(chips) if chips else "League highlights."
+    if chips:
+        line = "  ".join(chips)
+    elif any(moment.kind == "featured" for moment in moments):
+        line = "ON THE FLOOR."
+    else:
+        line = "League highlights."
     return [name, line, "2K Comp League."]
 
 

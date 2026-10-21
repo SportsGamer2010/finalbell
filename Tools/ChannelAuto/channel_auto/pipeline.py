@@ -22,6 +22,7 @@ from channel_auto.render import (
     brand_league_short,
     brand_player,
     brand_promo,
+    write_roster_card,
     render_clip,
     spoken_lines,
     stamp_league_logo,
@@ -95,11 +96,25 @@ def assign_players(
     return named
 
 
-def build_plans(meta: VideoMeta, moments: list[Moment], profile: str, *, confident: bool, names_trusted: bool):
+def build_plans(
+    meta: VideoMeta,
+    moments: list[Moment],
+    profile: str,
+    *,
+    confident: bool,
+    names_trusted: bool,
+    roster: list[str] | None = None,
+):
     if profile == "knockout_highlight":
         return build_undisputed(meta, moments, confident=confident)
     if profile == "league_highlights":
-        return build_league(meta, moments, confident=confident, names_trusted=names_trusted)
+        return build_league(
+            meta,
+            moments,
+            confident=confident,
+            names_trusted=names_trusted,
+            roster=roster,
+        )
     raise ValueError(f"Unknown profile {profile}")
 
 
@@ -148,24 +163,29 @@ def render_plans(settings: Settings, video: Path, meta: VideoMeta, profile: str,
         if profile != "knockout_highlight" and plan.kind not in {"promo", "player"}:
             has_voice = synthesize(plan.spoken, voice_name, voice_path)
         print(f"Cutting {plan.player or plan.slug}")
-        render_clip(
-            video,
-            plan.moments,
-            plan.hook,
-            spoken_lines(plan.spoken),
-            dest,
-            voice_path if has_voice else None,
-            work_dir=scratch,
-            duck_voice=plan.kind == "player",
-        )
-        best = max(plan.moments, key=lambda moment: moment.score)
-        if profile == "knockout_highlight":
-            stamp = min(best.end - 1.0, best.start + 14.0)
-        elif plan.kind == "promo":
-            stamp = max(0.0, best.end - 3.0)
+        roster_only = plan.kind == "player" and not plan.moments
+        if roster_only:
+            write_roster_card(video, dest, plan.player or plan.hook)
+            write_thumbnail(dest, 1.0, plan.hook, _badge(profile, plan.player, plan.kind), thumb)
         else:
-            stamp = best.start + min(1.0, best.duration * 0.4)
-        write_thumbnail(video, stamp, plan.hook, _badge(profile, plan.player, plan.kind), thumb)
+            render_clip(
+                video,
+                plan.moments,
+                plan.hook,
+                spoken_lines(plan.spoken),
+                dest,
+                voice_path if has_voice else None,
+                work_dir=scratch,
+                duck_voice=plan.kind == "player",
+            )
+            best = max(plan.moments, key=lambda moment: moment.score)
+            if profile == "knockout_highlight":
+                stamp = min(best.end - 1.0, best.start + 14.0)
+            elif plan.kind == "promo":
+                stamp = max(0.0, best.end - 3.0)
+            else:
+                stamp = best.start + min(1.0, best.duration * 0.4)
+            write_thumbnail(video, stamp, plan.hook, _badge(profile, plan.player, plan.kind), thumb)
         caption = plan.tiktok_caption
         description = plan.youtube_description
         if plan.kind == "promo":
@@ -175,7 +195,8 @@ def render_plans(settings: Settings, video: Path, meta: VideoMeta, profile: str,
             caption = f"{caption}\n\n{brand_line}"
             description = f"{description}\n\n{brand_line}"
         elif plan.kind == "player":
-            brand_player(dest, dest, plan.player or plan.hook, plan.kicker or "2K COMP LEAGUE")
+            if not roster_only:
+                brand_player(dest, dest, plan.player or plan.hook, plan.kicker or "2K COMP LEAGUE")
             stamp_league_logo(thumb)
             brand_line = f"2K Comp League\n{LEAGUE_URL.lower()}"
             caption = f"{caption}\n\n{brand_line}"
@@ -265,13 +286,22 @@ def process_video(settings: Settings, video_id: str, playlist_id: str, profile: 
         except (OSError, subprocess.CalledProcessError, ValueError) as exc:
             print(f"Scoreboard read failed: {exc}")
         try:
-            card_events = scan_player_events(video, meta.duration)
+            card_events, seen = scan_player_events(video, meta.duration)
             if card_events:
                 moments = list(moments) + card_events
+            if seen:
+                roster = list(roster) + [name for name in seen if name not in roster]
                 names_trusted = True
         except (OSError, subprocess.CalledProcessError, ValueError, ImportError) as exc:
             print(f"Player card read failed: {exc}")
-    plans = build_plans(meta, moments, profile, confident=confident, names_trusted=names_trusted)
+    plans = build_plans(
+        meta,
+        moments,
+        profile,
+        confident=confident,
+        names_trusted=names_trusted,
+        roster=roster,
+    )
     if not plans:
         if profile == "knockout_highlight":
             raise RuntimeError(f"No knockout graphic found in {meta.title}.")

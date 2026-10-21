@@ -8,7 +8,7 @@ from channel_auto.hud import clean_gamertag, resolve_name
 from channel_auto.models import Moment, VideoMeta
 from channel_auto.parse import parse_moment_block, parse_roster, parse_title
 from channel_auto.pipeline import build_plans
-from channel_auto.players import events_from_card
+from channel_auto.players import events_from_card, reels_from_card
 from channel_auto.publish_youtube import privacy_for
 from channel_auto.render import thumbnail_lines
 from channel_auto.scorebug import clean_scores
@@ -181,6 +181,29 @@ class PlanTests(unittest.TestCase):
         self.assertIn("2 PTS", player.kicker)
         self.assertIn("1 AST", player.kicker)
         self.assertNotIn("Voice and commentary", player.tiktok_caption)
+
+    def test_every_roster_player_gets_a_reel(self):
+        samples = [(float(stamp), "HOPII", {"pts": 2}) for stamp in range(10, 18)]
+        events, names = reels_from_card(samples, 100, roster=["HOPII", "BenchGuy"])
+        self.assertEqual(names, ["HOPII", "BenchGuy"])
+        self.assertTrue(events)
+        self.assertTrue(all(event.player == "HOPII" and event.kind == "featured" for event in events))
+        meta = VideoMeta("game", "w2e over underdogs gm 2", "UCsrc", 1800)
+        plans = build_plans(
+            meta,
+            events,
+            "league_highlights",
+            confident=True,
+            names_trusted=True,
+            roster=names,
+        )
+        players = [plan.player for plan in plans if plan.kind == "player"]
+        self.assertEqual(players, ["HOPII", "BenchGuy"])
+        bench = next(plan for plan in plans if plan.player == "BenchGuy")
+        self.assertEqual(bench.moments, [])
+        self.assertEqual(bench.kicker, "ON THE ROSTER.")
+        floor = next(plan for plan in plans if plan.player == "HOPII")
+        self.assertEqual(floor.kicker, "ON THE FLOOR.")
 
     def test_quiet_video_fallback_is_unlisted(self):
         windows = even_windows(90, 3, 12)

@@ -608,6 +608,66 @@ def brand_player(source: Path, dest: Path, name: str, kicker: str, logo: Path | 
         temporary.replace(dest)
 
 
+def write_roster_card(source: Path, dest: Path, name: str, logo: Path | None = None) -> None:
+    mark = _logo_ready(logo or LEAGUE_LOGO)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shown = _drawtext(name.upper()[:24])
+    plate = (
+        "[2:v]colorkey=0x000000:0.16:0.08,scale=180:-1[lg];"
+        "[0:v][lg]overlay=(W-w)/2:620[marked];"
+        f"[marked]drawtext=fontfile=arialbd.ttf:text='{shown}'"
+        ":fontsize=64:fontcolor=white:x=48:y=860,"
+        "drawbox=x=48:y=960:w=720:h=8:color=0xFFE14A@1.0:t=fill,"
+        "drawtext=fontfile=arialbd.ttf:text='ON THE ROSTER'"
+        ":fontsize=36:fontcolor=0xFFE14A:x=48:y=1000,"
+        "drawtext=fontfile=arialbd.ttf:text='2KCOMPLEAGUE.COM'"
+        ":fontsize=28:fontcolor=0x4DA3FF:x=48:y=1070[v];"
+        f"[1:a]{GAME_BED},atrim=0:6,asetpts=PTS-STARTPTS[a]"
+    )
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:r=30:d=6",
+            "-ss",
+            "30",
+            "-t",
+            "6",
+            "-i",
+            str(source),
+            "-i",
+            str(mark),
+            "-filter_complex",
+            plate,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(dest),
+        ],
+        cwd=Path(FONTS),
+    )
+
+
 def brand_league_short(source: Path, dest: Path, logo: Path | None = None) -> None:
     brand_short(
         source,

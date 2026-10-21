@@ -33,7 +33,7 @@ SKIP_NAMES = {
     "PF",
 }
 STAT_KINDS = set(CARD_LABELS.values()) | {"dunk"}
-PLAYER_REEL_KINDS = STAT_KINDS | {"three", "block", "steal", "ankle", "alley"}
+PLAYER_REEL_KINDS = STAT_KINDS | {"three", "block", "steal", "ankle", "alley", "featured"}
 
 
 def _center(box) -> tuple[float, float]:
@@ -176,6 +176,110 @@ def events_from_card(samples: list[tuple[float, str | None, dict[str, int]]], du
     return _merge_same_play(found)
 
 
+def unique_players(names: list[str]) -> list[str]:
+    aliases: dict[str, str] = {}
+    for name in names:
+        if name and not _looks_like_chrome(name):
+            _canon(name, aliases)
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        if not name or _looks_like_chrome(name):
+            continue
+        canon = _canon(name, aliases)
+        if canon in seen:
+            continue
+        seen.add(canon)
+        ordered.append(canon)
+    return ordered
+
+
+def roster_from_samples(samples: list[tuple[float, str | None, dict[str, int]]]) -> list[str]:
+    aliases: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for _stamp, raw_name, _stats in samples:
+        if not raw_name or _looks_like_chrome(raw_name):
+            continue
+        name = _canon(raw_name, aliases)
+        if name not in counts:
+            order.append(name)
+            counts[name] = 0
+        counts[name] += 1
+    totals: dict[str, int] = {}
+    for name, count in counts.items():
+        canon = _canon(name, aliases)
+        totals[canon] = totals.get(canon, 0) + count
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in order:
+        canon = _canon(name, aliases)
+        if canon in seen or totals.get(canon, 0) < 2:
+            continue
+        seen.add(canon)
+        ordered.append(canon)
+    return ordered
+
+
+def presence_moments(
+    samples: list[tuple[float, str | None, dict[str, int]]],
+    duration: float,
+    players: set[str],
+) -> list[Moment]:
+    if not players:
+        return []
+    aliases: dict[str, str] = {}
+    stamps: dict[str, list[float]] = {player: [] for player in players}
+    for stamp, raw_name, _stats in samples:
+        if not raw_name:
+            continue
+        name = _canon(raw_name, aliases)
+        if name in stamps:
+            stamps[name].append(stamp)
+    found: list[Moment] = []
+    for player, times in stamps.items():
+        if len(times) < 2:
+            continue
+        runs: list[tuple[float, float]] = []
+        start = previous = times[0]
+        for stamp in times[1:]:
+            if stamp - previous > 2:
+                runs.append((start, previous))
+                start = stamp
+            previous = stamp
+        runs.append((start, previous))
+        if len(runs) > 8:
+            step = len(runs) / 8
+            runs = [runs[min(len(runs) - 1, int(index * step))] for index in range(8)]
+        for begin, _end in runs:
+            clip_end = min(duration, begin + 6.0)
+            if clip_end - begin < 4:
+                continue
+            found.append(
+                Moment(
+                    start=begin,
+                    end=clip_end,
+                    score=1.0,
+                    kind="featured",
+                    player=player,
+                    note="",
+                )
+            )
+    return found
+
+
+def reels_from_card(
+    samples: list[tuple[float, str | None, dict[str, int]]],
+    duration: float,
+    roster: list[str] | None = None,
+) -> tuple[list[Moment], list[str]]:
+    events = events_from_card(samples, duration)
+    names = unique_players(list(roster or []) + roster_from_samples(samples))
+    covered = {event.player for event in events if event.player}
+    missing = {name for name in names if name not in covered}
+    return events + presence_moments(samples, duration, missing), names
+
+
 def _merge_same_play(moments: list[Moment]) -> list[Moment]:
     if not moments:
         return []
@@ -248,15 +352,16 @@ def scan_player_events(video: Path, duration: float) -> list[Moment]:
             (work / "card-read.json").write_text(json.dumps(raw_cards), encoding="utf-8")
     print(f"Read {len(frames)} player cards", flush=True)
     (work / "card-read.json").write_text(json.dumps(raw_cards), encoding="utf-8")
-    events = events_from_card(samples, duration)
+    events, names = reels_from_card(samples, duration)
     events = _tag_dunks(video, events, engine, work)
     for old in work.glob("*.jpg"):
         old.unlink()
     counts: dict[str, int] = {}
     for event in events:
         counts[event.player or ""] = counts.get(event.player or "", 0) + 1
+    print("Roster: " + ", ".join(names))
     print("Player plays: " + ", ".join(f"{name} {count}" for name, count in sorted(counts.items())))
-    return events
+    return events, names
 
 
 def _tag_dunks(video: Path, moments: list[Moment], engine, work: Path) -> list[Moment]:

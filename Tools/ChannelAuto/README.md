@@ -12,7 +12,7 @@ This watches two GameAthlete playlists. When a video is added, it builds vertica
 Source playlists:
 
 - Undisputed Bouts: `PLLhVwQz29NhE` — one knockout highlight per fight, branded for esportsboxingleague.com
-- Underdogs 2KCL Games NBA2k27 Season 1: `PLUgImi6WUKkE` — one full-game highlight, plus one highlight per player when names are known
+- Underdogs 2KCL Games NBA2k27 Season 1: `PLUgImi6WUKkE` — one full-game highlight, plus one folder for every player on both teams
 
 The watcher accepts videos from the GameAthlete channel id only, and the YouTube uploader accepts a login for `@TechBeatsxGames` only.
 
@@ -34,7 +34,7 @@ The first run marks videos already in the playlists as seen. Boxing videos from 
 - One UNCS coaching film of the buckets they gave up, plus a screenshot of each of those possessions. The voice talks like a coach: get back, stay down on closeouts, and box out.
 - Three league marketing spots with no narrator: a question hook, the closing run, and a 2K Comp League bumper. On-screen type carries the post, then 2kcompleague.com.
 
-Player names and stat lines are read from the 2K player card during the game. A moments file or YouTube chapters can still name a play. The full highlight is still the loudest stretches of the game, separate from the player folders.
+Every gamertag read from the 2K player card gets a folder, and so does every name under `#roster`. A player with no tracked stat line still gets that folder. The full highlight stays the loudest stretches of the game, separate from the player folders.
 
 2K captions say the voice is AI-generated. Every caption credits GameAthlete.
 
