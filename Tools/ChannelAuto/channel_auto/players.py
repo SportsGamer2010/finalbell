@@ -42,9 +42,57 @@ def _center(box) -> tuple[float, float]:
     return sum(xs) / len(xs), sum(ys) / len(ys)
 
 
+_CHROME_PIECES = (
+    "SEASON",
+    "EASON",
+    "PERFORM",
+    "GAMESTAT",
+    "TOPPERF",
+    "BADGE",
+    "INVENTORY",
+    "ARTIST",
+    "TRACK",
+    "NAV",
+    "INVITE",
+    "FAVORITE",
+    "TOGGLE",
+    "LOADOUT",
+    "GUEST",
+    "SOCIAL",
+    "CONTROL",
+    "PLAYGAME",
+    "WORST",
+    "BESTSTAT",
+    "AVGTG",
+)
+_CHROME_EXACT = {
+    "BACK",
+    "SELECT",
+    "APPLY",
+    "UNCS",
+    "NEXT",
+    "SKIP",
+    "DONE",
+    "EXIT",
+    "MENU",
+    "HOME",
+    "START",
+    "QUIT",
+    "CLOSE",
+    "OPEN",
+    "SAVE",
+    "EDIT",
+    "VIEW",
+    "SORT",
+    "HELP",
+}
+
+
 def _looks_like_chrome(folded: str) -> bool:
-    upper = folded.upper()
-    return any(piece in upper for piece in ("SEASON", "EASON", "PERFORM", "GAMESTAT", "TOPPERF"))
+    upper = re.sub(r"[^A-Z0-9]", "", folded.upper())
+    if not upper or len(upper) > 16 or upper in _CHROME_EXACT:
+        return True
+    return any(piece in upper for piece in _CHROME_PIECES)
 
 
 def parse_card(items) -> tuple[str | None, dict[str, int]]:
@@ -127,7 +175,7 @@ def _canon(name: str, aliases: dict[str, str]) -> str:
         )
         if not close and not nested:
             continue
-        chosen = display if len(display) >= len(name) else name
+        chosen = name if len(re.sub(r"[^A-Za-z0-9]", "", name)) < len(re.sub(r"[^A-Za-z0-9]", "", display)) else display
         aliases[key] = chosen
         aliases[other] = chosen
         return chosen
@@ -135,9 +183,19 @@ def _canon(name: str, aliases: dict[str, str]) -> str:
     return name
 
 
+def _prepare_aliases(names: list[str]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    clean = [name for name in names if name and not _looks_like_chrome(name)]
+    for name in clean:
+        _canon(name, aliases)
+    for name in clean:
+        _canon(name, aliases)
+    return aliases
+
+
 def events_from_card(samples: list[tuple[float, str | None, dict[str, int]]], duration: float) -> list[Moment]:
     last: dict[str, dict[str, int]] = {}
-    aliases: dict[str, str] = {}
+    aliases = _prepare_aliases([name for _stamp, name, _stats in samples if name])
     found: list[Moment] = []
     for stamp, raw_name, stats in samples:
         if not raw_name or not stats:

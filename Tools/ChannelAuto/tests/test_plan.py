@@ -204,6 +204,21 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(bench.kicker, "ON THE ROSTER.")
         floor = next(plan for plan in plans if plan.player == "HOPII")
         self.assertEqual(floor.kicker, "ON THE FLOOR.")
+        merged = events_from_card(
+            [
+                (10, "Dktownsfinest26", {"pts": 8}),
+                (20, "ktownsfinest26", {"pts": 10}),
+            ],
+            100,
+        )
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].player, "ktownsfinest26")
+        from channel_auto.players import _looks_like_chrome
+
+        self.assertTrue(_looks_like_chrome("Back"))
+        self.assertTrue(_looks_like_chrome("andthebadgeswillbesentbacktotheinventory"))
+        self.assertFalse(_looks_like_chrome("TooBadDawg"))
+        self.assertFalse(_looks_like_chrome("ktownsfinest26"))
 
     def test_quiet_video_fallback_is_unlisted(self):
         windows = even_windows(90, 3, 12)
