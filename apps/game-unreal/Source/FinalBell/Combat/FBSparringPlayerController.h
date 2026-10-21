@@ -56,6 +56,12 @@ public:
 	/** True when this local player should own the fight mapping. Menus and a lost window are false. */
 	bool WantsFightMapping() const;
 
+	void AddCreatorOrbit(float YawDelta, float PitchDelta);
+	void AddCreatorZoom(float ZoomDelta);
+	void SetCreatorDrag(bool bDragging);
+	void SetCreatorMeasure(TSharedPtr<STextBlock> Measure);
+	FString GetCreatorMeasureText() const;
+
 protected:
 	void ShowModeMenu();
 	void HideModeMenu();
@@ -144,6 +150,15 @@ protected:
 	bool bBagRoomLookBuilt = false;
 	void EnsureLocalBagRoom();
 	bool bBuilderOpen = false;
+	float CreatorYaw = 180.f;
+	float CreatorPitch = 6.f;
+	float CreatorZoom = 0.62f;
+	bool bCreatorCameraOn = false;
+	bool bCreatorDragging = false;
+	bool bCreatorIdleSpin = true;
+	TSharedPtr<STextBlock> CreatorMeasure;
+	void EnsureCreatorCamera();
+	void ShutdownCreatorCamera();
 	/** Career fighter select locks the opponent to a premade in the same class. */
 	bool bCareerSelect = false;
 	/** 0 to 1. The fighter screen slides in from this value so a rebuild does not restart it. */

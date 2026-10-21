@@ -1,4 +1,5 @@
 #include "Combat/FBFighterSave.h"
+#include "Combat/FBBoxerCustomization.h"
 #include "Kismet/GameplayStatics.h"
 
 namespace
@@ -82,6 +83,11 @@ bool UFBFighterRosterSave::TryAdd(FFBFighterRecord Record, FString& OutWhy)
 	Record.WeightClass = FFBFighterBalance::ClassForDivision(Record.Division);
 	Record.RulesetId = TEXT("CompetitiveFair");
 	Record.RulesetVersion = FFBFighterBalance::RulesetVersion;
+	FFBBoxerCustomization::Sanitize(Record.Look);
+	if (!FFBBoxerCustomization::Validate(Record.Look, Record.WeightClass, OutWhy))
+	{
+		return false;
+	}
 	Created.Add(Record);
 	WriteToDisk();
 	return true;
@@ -105,7 +111,13 @@ bool UFBFighterRosterSave::TryReplace(const FString& Id, const FFBFighterRecord&
 	Existing->Division = Record.Division;
 	Existing->WeightClass = FFBFighterBalance::ClassForDivision(Record.Division);
 	Existing->Stance = Record.Stance;
-	Existing->Look = Record.Look;
+	FFBPresentation Look = Record.Look;
+	FFBBoxerCustomization::Sanitize(Look);
+	if (!FFBBoxerCustomization::Validate(Look, FFBFighterBalance::ClassForDivision(Record.Division), OutWhy))
+	{
+		return false;
+	}
+	Existing->Look = Look;
 	if (Existing->bFoughtOnce && Refund > 0)
 	{
 		Existing->RetrainBudget = FMath::Max(0, Existing->RetrainBudget - Refund);

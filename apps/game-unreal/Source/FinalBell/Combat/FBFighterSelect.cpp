@@ -1,6 +1,7 @@
 #include "Combat/FBSparringPlayerController.h"
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBFighterSave.h"
+#include "Combat/FBBoxerCustomization.h"
 #include "Combat/FBSparringGameMode.h"
 #include "Session/FBSessionSubsystem.h"
 #include "UI/FBGameInstance.h"
@@ -19,6 +20,8 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SSlider.h"
+#include "Input/Events.h"
 #include "Styling/CoreStyle.h"
 
 class SFBFighterSelectStage : public SCompoundWidget
@@ -113,6 +116,102 @@ private:
 	FLinearColor Quiet;
 	FLinearColor Accent;
 	FLinearColor Line;
+};
+
+class SFBCreatorViewport : public SBorder
+{
+public:
+	SLATE_BEGIN_ARGS(SFBCreatorViewport) {}
+		SLATE_ARGUMENT(AFBSparringPlayerController*, Controller)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs)
+	{
+		Controller = InArgs._Controller;
+		const FSlateBrush* White = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
+		TSharedPtr<STextBlock> Measure;
+		SBorder::Construct(SBorder::FArguments()
+			.BorderImage(White)
+			.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.01f))
+			.Padding(FMargin(16.f, 14.f))
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("DRAG TO ROTATE      WHEEL TO ZOOM")))
+					.Font(FBMenuArt::PosterFont(12, 40))
+					.ColorAndOpacity(FLinearColor(0.93f, 0.90f, 0.84f, 0.92f))
+				]
+				+ SVerticalBox::Slot().FillHeight(1.f)
+				[
+					SNew(SBorder)
+					.BorderImage(White)
+					.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.01f))
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SAssignNew(Measure, STextBlock)
+					.Text(FText::FromString(Controller.IsValid() ? Controller->GetCreatorMeasureText() : FString()))
+					.Font(FBMenuArt::PosterFont(16, 22))
+					.ColorAndOpacity(FLinearColor(0.93f, 0.90f, 0.84f))
+					.AutoWrapText(true)
+				]
+			]);
+		if (Controller.IsValid())
+		{
+			Controller->SetCreatorMeasure(Measure);
+		}
+	}
+
+	virtual FReply OnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event) override
+	{
+		if (Event.GetEffectingButton() == EKeys::LeftMouseButton && Controller.IsValid())
+		{
+			bDrag = true;
+			Last = Event.GetScreenSpacePosition();
+			Controller->SetCreatorDrag(true);
+			return FReply::Handled().CaptureMouse(AsShared());
+		}
+		return FReply::Unhandled();
+	}
+
+	virtual FReply OnMouseButtonUp(const FGeometry& Geometry, const FPointerEvent& Event) override
+	{
+		bDrag = false;
+		if (Controller.IsValid())
+		{
+			Controller->SetCreatorDrag(false);
+		}
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+
+	virtual FReply OnMouseMove(const FGeometry& Geometry, const FPointerEvent& Event) override
+	{
+		if (!bDrag || !Controller.IsValid())
+		{
+			return FReply::Unhandled();
+		}
+		const FVector2D Now = Event.GetScreenSpacePosition();
+		const FVector2D Delta = Now - Last;
+		Last = Now;
+		Controller->AddCreatorOrbit(Delta.X * 0.35f, -Delta.Y * 0.18f);
+		return FReply::Handled();
+	}
+
+	virtual FReply OnMouseWheel(const FGeometry& Geometry, const FPointerEvent& Event) override
+	{
+		if (Controller.IsValid())
+		{
+			Controller->AddCreatorZoom(Event.GetWheelDelta() * -0.08f);
+		}
+		return FReply::Handled();
+	}
+
+private:
+	TWeakObjectPtr<AFBSparringPlayerController> Controller;
+	bool bDrag = false;
+	FVector2D Last = FVector2D::ZeroVector;
 };
 
 namespace
@@ -548,6 +647,7 @@ void AFBSparringPlayerController::ShowFighterSelect()
 		if (const UFBPlayerSettingsSave* Saved = UFBPlayerSettingsSave::LoadOrCreate())
 		{
 			SelectDifficulty = FFBTactical::SanitizeDifficulty(Saved->AIDifficulty);
+			bCreatorIdleSpin = !Saved->bReducedMotion;
 			if (Saved->bReducedMotion)
 			{
 				SelectReveal = 1.f;
@@ -569,6 +669,8 @@ void AFBSparringPlayerController::HideFighterSelect()
 	FighterSelectWidget.Reset();
 	SelectRows.Reset();
 	SelectActions.Reset();
+	CreatorMeasure.Reset();
+	ShutdownCreatorCamera();
 	bFighterSelectVisible = false;
 	bShowMouseCursor = false;
 	if (!IsMenuTakingInput())
@@ -872,6 +974,7 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 {
 	SelectRows.Reset();
 	SelectActions.Reset();
+	CreatorMeasure.Reset();
 	if (!GEngine || !LocalViewport())
 	{
 		return;
@@ -1013,6 +1116,35 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		{
 			Value = Value >= 0.85f ? 0.05f : FMath::Clamp(Value + 0.15f, 0.f, 1.f);
 		};
+		auto PushLook = [this]()
+		{
+			if (AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetPawn()))
+			{
+				Boxer->PreviewCreatorLook(Draft.Look);
+			}
+			if (CreatorMeasure.IsValid())
+			{
+				CreatorMeasure->SetText(FText::FromString(GetCreatorMeasureText()));
+			}
+		};
+		auto AddSlider = [&](const FString& Name, float FFBPresentation::*Field)
+		{
+			AddChoice(FString::Printf(TEXT("%s %.0f"), *Name, Draft.Look.*Field * 100.f), [this, Field]()
+			{
+				float& Value = Draft.Look.*Field;
+				Value = Value >= 0.90f ? 0.05f : FMath::Clamp(Value + 0.1f, 0.f, 1.f);
+			});
+			Builder->AddSlot().AutoHeight().Padding(10.f, 0.f, 4.f, 6.f)
+			[
+				SNew(SSlider)
+				.Value(Draft.Look.*Field)
+				.OnValueChanged_Lambda([this, Field, PushLook](float New)
+				{
+					Draft.Look.*Field = FMath::Clamp(New, 0.f, 1.f);
+					PushLook();
+				})
+			];
+		};
 		const TCHAR* Pages[] = { TEXT("Identity"), TEXT("Body"), TEXT("Face"), TEXT("Skin"), TEXT("Hair"), TEXT("Ratings") };
 		for (int32 Page = 0; Page < 6; ++Page)
 		{
@@ -1021,30 +1153,25 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		}
 		AddChoice(TEXT("Randomize look"), [this]()
 		{
-			Draft.Look.SkinU = FMath::FRand();
-			Draft.Look.SkinV = FMath::FRand();
-			Draft.Look.Height = FMath::FRand();
-			Draft.Look.Muscularity = FMath::FRand();
-			Draft.Look.Muscle = Draft.Look.Muscularity;
-			Draft.Look.BodyFat = FMath::FRand();
-			Draft.Look.Masculine = FMath::FRand();
-			Draft.Look.Brow = FMath::FRand();
-			Draft.Look.Eyes = FMath::FRand();
-			Draft.Look.Nose = FMath::FRand();
-			Draft.Look.Cheeks = FMath::FRand();
-			Draft.Look.Jaw = FMath::FRand();
-			Draft.Look.Chin = FMath::FRand();
-			Draft.Look.Lips = FMath::FRand();
-			Draft.Look.Ears = FMath::FRand();
-			Draft.Look.Asymmetry = FMath::FRand();
-			Draft.Look.Hair = static_cast<EFBHairStyle>(FMath::RandRange(0, 4));
-			Draft.Look.Beard = FMath::RandRange(0, 3);
-			Draft.Look.HairGray = FMath::FRandRange(0.f, 0.4f);
-			Draft.Look.IrisPattern = FMath::RandRange(0, 8);
-			Draft.Look.FreckleMask = FMath::RandRange(0, 3);
-			Draft.Look.GloveColor = FMath::RandRange(0, 5);
-			Draft.Look.TrunksColor = FMath::RandRange(0, 5);
+			Draft.Stance = FMath::RandBool() ? EFBStance::Southpaw : EFBStance::Orthodox;
+			FFBBoxerCustomization::Randomize(Draft.Look, FMath::Rand());
 			SelectStatus = TEXT("Look randomized. Ratings stay on the 600-point budget.");
+		});
+		AddChoice(TEXT("Reset look"), [this]()
+		{
+			const FString Nickname = Draft.Look.Nickname;
+			const FString Country = Draft.Look.Country;
+			FFBBoxerCustomization::ResetLook(Draft.Look);
+			Draft.Look.Nickname = Nickname;
+			Draft.Look.Country = Country;
+			SelectStatus = TEXT("Look reset. Ratings stay on the 600-point budget.");
+		});
+		AddChoice(TEXT("Zoom in"), [this]() { AddCreatorZoom(-0.12f); });
+		AddChoice(TEXT("Zoom out"), [this]() { AddCreatorZoom(0.12f); });
+		AddChoice(TEXT("Back to roster"), [this]()
+		{
+			bBuilderOpen = false;
+			SelectStatus.Reset();
 		});
 		TArray<FFBFighterRecord> Starters;
 		FFBFighterBalance::GetPremades(Starters);
@@ -1090,6 +1217,17 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			{
 				Draft.Stance = Draft.Stance == EFBStance::Orthodox ? EFBStance::Southpaw : EFBStance::Orthodox;
 			});
+			Builder->AddSlot().AutoHeight().Padding(0.f, 4.f)
+			[
+				SNew(SEditableTextBox)
+				.HintText(FText::FromString(TEXT("Hometown")))
+				.Text(FText::FromString(Draft.Look.Hometown))
+				.OnTextChanged_Lambda([this](const FText& Text) { Draft.Look.Hometown = Text.ToString().Left(FFBBoxerCustomization::HometownMax); })
+			];
+			AddChoice(FString::Printf(TEXT("Age: %d"), Draft.Look.Age), [this]()
+			{
+				Draft.Look.Age = Draft.Look.Age >= FFBBoxerCustomization::AgeMax ? FFBBoxerCustomization::AgeMin : Draft.Look.Age + 1;
+			});
 			AddChoice(FString::Printf(TEXT("Country: %s"), *Draft.Look.Country), [this]()
 			{
 				const TCHAR* Countries[] = { TEXT("USA"), TEXT("Mexico"), TEXT("Cuba"), TEXT("UK"), TEXT("Ukraine"), TEXT("Nigeria"), TEXT("Japan"), TEXT("Philippines") };
@@ -1111,30 +1249,42 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			AddChoice(FString::Printf(TEXT("Stripe: %s"), Colors[Draft.Look.TrunksStripe % 6]), [this]() { Draft.Look.TrunksStripe = (Draft.Look.TrunksStripe + 1) % 6; });
 			AddChoice(FString::Printf(TEXT("Shoes: %s"), Colors[Draft.Look.ShoeColor % 6]), [this]() { Draft.Look.ShoeColor = (Draft.Look.ShoeColor + 1) % 6; });
 			AddChoice(FString::Printf(TEXT("Hand wraps: %s"), Colors[Draft.Look.WrapColor % 6]), [this]() { Draft.Look.WrapColor = (Draft.Look.WrapColor + 1) % 6; });
+			AddChoice(FString::Printf(TEXT("Glove style: %s"), FFBBoxerCustomization::GloveStyleName(Draft.Look.GloveStyle)), [this]() { Draft.Look.GloveStyle = (Draft.Look.GloveStyle + 1) % 3; });
+			AddChoice(FString::Printf(TEXT("Trunks style: %s"), FFBBoxerCustomization::TrunksStyleName(Draft.Look.TrunksStyle)), [this]() { Draft.Look.TrunksStyle = (Draft.Look.TrunksStyle + 1) % 3; });
+			AddChoice(FString::Printf(TEXT("Shoe style: %s"), FFBBoxerCustomization::ShoeStyleName(Draft.Look.ShoeStyle)), [this]() { Draft.Look.ShoeStyle = (Draft.Look.ShoeStyle + 1) % 2; });
+			AddChoice(FString::Printf(TEXT("Wrap style: %s"), FFBBoxerCustomization::WrapStyleName(Draft.Look.WrapStyle)), [this]() { Draft.Look.WrapStyle = (Draft.Look.WrapStyle + 1) % 3; });
+			AddChoice(FString::Printf(TEXT("Accessory: %s"), FFBBoxerCustomization::AccessoryName(Draft.Look.Accessory)), [this]() { Draft.Look.Accessory = (Draft.Look.Accessory + 1) % 4; });
 		}
 		else if (BuilderPage == 1)
 		{
-			AddChoice(FString::Printf(TEXT("Height %.0f"), Draft.Look.Height * 100.f), [this, Step]() { Step(Draft.Look.Height); });
-			AddChoice(FString::Printf(TEXT("Muscularity %.0f"), Draft.Look.Muscularity * 100.f), [this, Step]() { Step(Draft.Look.Muscularity); Draft.Look.Muscle = Draft.Look.Muscularity; });
-			AddChoice(FString::Printf(TEXT("Fat %.0f"), Draft.Look.BodyFat * 100.f), [this, Step]() { Step(Draft.Look.BodyFat); });
-			AddChoice(FString::Printf(TEXT("Masculine/Feminine %.0f"), Draft.Look.Masculine * 100.f), [this, Step]() { Step(Draft.Look.Masculine); });
-			AddChoice(FString::Printf(TEXT("Chest %.0f"), Draft.Look.Chest * 100.f), [this, Step]() { Step(Draft.Look.Chest); });
-			AddChoice(FString::Printf(TEXT("Waist %.0f"), Draft.Look.Waist * 100.f), [this, Step]() { Step(Draft.Look.Waist); });
-			AddChoice(FString::Printf(TEXT("Hip %.0f"), Draft.Look.Hip * 100.f), [this, Step]() { Step(Draft.Look.Hip); });
-			AddChoice(FString::Printf(TEXT("Bicep %.0f"), Draft.Look.Bicep * 100.f), [this, Step]() { Step(Draft.Look.Bicep); });
-			AddChoice(FString::Printf(TEXT("Thigh %.0f"), Draft.Look.Thigh * 100.f), [this, Step]() { Step(Draft.Look.Thigh); });
+			AddSlider(TEXT("Height"), &FFBPresentation::Height);
+			AddSlider(TEXT("Reach"), &FFBPresentation::Reach);
+			AddSlider(TEXT("Shoulders"), &FFBPresentation::ShoulderWidth);
+			AddSlider(TEXT("Chest"), &FFBPresentation::Chest);
+			AddSlider(TEXT("Torso"), &FFBPresentation::TorsoLength);
+			AddSlider(TEXT("Arms"), &FFBPresentation::ArmLength);
+			AddSlider(TEXT("Legs"), &FFBPresentation::LegLength);
+			AddSlider(TEXT("Muscle"), &FFBPresentation::Muscularity);
+			AddSlider(TEXT("Fat"), &FFBPresentation::BodyFat);
+			AddSlider(TEXT("Neck"), &FFBPresentation::Neck);
+			AddSlider(TEXT("Waist"), &FFBPresentation::Waist);
+			AddSlider(TEXT("Hip"), &FFBPresentation::Hip);
+			AddSlider(TEXT("Bicep"), &FFBPresentation::Bicep);
+			AddSlider(TEXT("Thigh"), &FFBPresentation::Thigh);
 		}
 		else if (BuilderPage == 2)
 		{
-			AddChoice(FString::Printf(TEXT("Brow %.0f"), Draft.Look.Brow * 100.f), [this, Step]() { Step(Draft.Look.Brow); });
-			AddChoice(FString::Printf(TEXT("Eyes %.0f"), Draft.Look.Eyes * 100.f), [this, Step]() { Step(Draft.Look.Eyes); });
-			AddChoice(FString::Printf(TEXT("Nose %.0f"), Draft.Look.Nose * 100.f), [this, Step]() { Step(Draft.Look.Nose); });
-			AddChoice(FString::Printf(TEXT("Cheeks %.0f"), Draft.Look.Cheeks * 100.f), [this, Step]() { Step(Draft.Look.Cheeks); });
-			AddChoice(FString::Printf(TEXT("Jaw %.0f"), Draft.Look.Jaw * 100.f), [this, Step]() { Step(Draft.Look.Jaw); });
-			AddChoice(FString::Printf(TEXT("Chin %.0f"), Draft.Look.Chin * 100.f), [this, Step]() { Step(Draft.Look.Chin); });
-			AddChoice(FString::Printf(TEXT("Lips %.0f"), Draft.Look.Lips * 100.f), [this, Step]() { Step(Draft.Look.Lips); });
-			AddChoice(FString::Printf(TEXT("Ears %.0f"), Draft.Look.Ears * 100.f), [this, Step]() { Step(Draft.Look.Ears); });
-			AddChoice(FString::Printf(TEXT("Asymmetry %.0f"), Draft.Look.Asymmetry * 100.f), [this, Step]() { Step(Draft.Look.Asymmetry); });
+			AddSlider(TEXT("Head width"), &FFBPresentation::HeadWidth);
+			AddSlider(TEXT("Head length"), &FFBPresentation::HeadLength);
+			AddSlider(TEXT("Brow"), &FFBPresentation::Brow);
+			AddSlider(TEXT("Eyes"), &FFBPresentation::Eyes);
+			AddSlider(TEXT("Nose"), &FFBPresentation::Nose);
+			AddSlider(TEXT("Cheeks"), &FFBPresentation::Cheeks);
+			AddSlider(TEXT("Jaw"), &FFBPresentation::Jaw);
+			AddSlider(TEXT("Chin"), &FFBPresentation::Chin);
+			AddSlider(TEXT("Lips"), &FFBPresentation::Lips);
+			AddSlider(TEXT("Ears"), &FFBPresentation::Ears);
+			AddSlider(TEXT("Asymmetry"), &FFBPresentation::Asymmetry);
 		}
 		else if (BuilderPage == 3)
 		{
@@ -1597,16 +1747,19 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		+ SHorizontalBox::Slot().FillWidth(1.3f).Padding(4.f, 0.f)[ CreateRow ]
 	];
 
+	TSharedRef<SWidget> LeftSlot = bBuilderOpen
+		? StaticCastSharedRef<SWidget>(SNew(SFBCreatorViewport).Controller(this))
+		: WrapPanel(LeftFrame, LeftBody);
 	TSharedRef<SWidget> Panels = SNew(SConstraintCanvas)
 		.Visibility(EVisibility::SelfHitTestInvisible)
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.025f, 0.035f, 0.492f, 0.80f))
+		.Anchors(bBuilderOpen ? FAnchors(0.02f, 0.02f, 0.46f, 0.80f) : FAnchors(0.025f, 0.035f, 0.492f, 0.80f))
 		.Offset(FMargin(0.f))
 		[
-			WrapPanel(LeftFrame, LeftBody)
+			LeftSlot
 		]
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.508f, 0.035f, 0.975f, 0.80f))
+		.Anchors(bBuilderOpen ? FAnchors(0.48f, 0.035f, 0.975f, 0.80f) : FAnchors(0.508f, 0.035f, 0.975f, 0.80f))
 		.Offset(FMargin(0.f))
 		[
 			WrapPanel(RightFrame, RightBody)
@@ -1636,9 +1789,10 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			Panels
 		];
 
+	const float BackdropLeft = bBuilderOpen ? 0.46f : 0.f;
 	FighterSelectWidget = WrapForPad(SNew(SConstraintCanvas)
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.f, 0.f, 1.f, 1.f))
+		.Anchors(FAnchors(BackdropLeft, 0.f, 1.f, 1.f))
 		.Offset(FMargin(0.f))
 		[
 			SNew(SBorder)
@@ -1646,7 +1800,7 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			.BorderBackgroundColor(FLinearColor(0.012f, 0.014f, 0.018f, 1.f))
 		]
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.f, 0.f, 1.f, 1.f))
+		.Anchors(FAnchors(BackdropLeft, 0.f, 1.f, 1.f))
 		.Offset(FMargin(0.f))
 		[
 			SNew(SScaleBox)
@@ -1656,7 +1810,7 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			]
 		]
 		+ SConstraintCanvas::Slot()
-		.Anchors(FAnchors(0.f, 0.f, 1.f, 1.f))
+		.Anchors(FAnchors(BackdropLeft, 0.f, 1.f, 1.f))
 		.Offset(FMargin(0.f))
 		[
 			SNew(SButton)

@@ -36,6 +36,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Camera")
 	void AddOrbitInput(FVector2D Axis);
 
+	/** Create-a-Boxer. Frames one fighter and leaves the fight dolly alone until it closes. */
+	void SetCreatorPreview(bool bEnabled, AFBBoxerCharacter* Subject);
+	void UpdateCreatorOrbit(float Yaw, float Pitch, float Zoom);
+
 	/**
 	 * Why: a knockdown cuts from the ringside lens to the canvas, looking up at the referee.
 	 * What: holds the camera on that shot until ClearRefereeView.
@@ -165,4 +169,11 @@ protected:
 	void AutoFindFighters();
 	void ComputeFrame(FVector& OutLocation, FVector& OutLookAt, float& OutFOV) const;
 	void SnapToFrame();
+	void UpdateCreatorFrame(float DeltaSeconds);
+
+	bool bCreatorPreview = false;
+	float CreatorYaw = 180.f;
+	float CreatorPitch = 6.f;
+	float CreatorZoom = 0.62f;
+	TWeakObjectPtr<AFBBoxerCharacter> CreatorSubject;
 };

@@ -74,11 +74,11 @@ Each premade is its own 600-point build. The Balanced, Puncher, Counter, and Pre
 
 1v1 AI opens the fighter screen instead of starting immediately. `FBMode 1` does the same. Pick a premade, or create one. Created fighters save in the slot `FBFighterRoster`, up to 10. Premades do not count. Before the first fight you can spend any legal draft. After a completed fight, that camp can refund up to 20 points, and the saved result must still cost 600. The server copies the build onto the fighter when the match is placed and will not apply an illegal one.
 
-Race (complexion), hair, brow, jaw, nose, tattoos, and muscle are presentation. They tint the body, add a no-collision hair or tattoo shape, move the face marks a few centimeters, or scale the glove mesh. They do not scale the capsule or the punch spheres.
+Race (complexion), hair, brow, jaw, nose, tattoos, and muscle are presentation. They tint the body, add a no-collision hair or tattoo shape, move the face marks a few centimeters, or scale the glove mesh. They do not scale the capsule or the punch spheres. Create-a-Boxer adds hometown, age, and body sliders on that same record. Bone length stays within 3 percent so the punch pose still reaches. The height and reach numbers are the weight-class labels.
 
 ## What this bout does not do yet
 
-The live bout is still one 3:00 round, so the between-round stamina recovery does not run unless a rest phase exists. The function is there for that rest.
+The live bout is three 3:00 rounds. The minute between rounds cuts fatigue and refills stamina up to the new ceiling. It does not erase a tired fighter's whole round.
 
 This is a listen server. The client sends the proposed build and the intents. It does not send damage. That is not a dedicated-server anti-cheat.
 

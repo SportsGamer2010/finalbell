@@ -1,4 +1,5 @@
 ﻿#include "Combat/FBBoxerCharacter.h"
+#include "Combat/FBBoxerCustomization.h"
 #include "Combat/FBBoxerAIController.h"
 #include "Combat/FBCombatComponent.h"
 #include "Combat/FBSparringGameMode.h"
@@ -19,6 +20,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EnhancedInputComponent.h"
+#include "InputCoreTypes.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/LocalPlayer.h"
 #include "Net/UnrealNetwork.h"
@@ -33,6 +35,7 @@
 #include "Engine/Engine.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/GameStateBase.h"
 
 #if !UE_BUILD_SHIPPING
@@ -40,6 +43,11 @@ static TAutoConsoleVariable<int32> CVarFBDebugContact(
 	TEXT("fb.DebugContact"),
 	0,
 	TEXT("Draw the glove sweep and the head, torso, and guard volumes. This is not the bout HUD."));
+
+static TAutoConsoleVariable<int32> CVarFBDebugDefense(
+	TEXT("fb.DebugDefense"),
+	0,
+	TEXT("Log L2/R2, the stick, the guard, and the defense pose. This is not the bout HUD."));
 #endif
 
 namespace
@@ -48,11 +56,6 @@ namespace
 	const FVector MeshRight(-1.f, 0.f, 0.f);
 	const FVector MeshUp(0.f, 0.f, 1.f);
 
-	// Full trunk command. The chest reaches this angle. The head keeps about 0.82 of it.
-	constexpr float SideRollDegrees = 48.f;
-	constexpr float LeanBackDegrees = -58.f;
-	constexpr float RollUnderDegrees = 74.f;
-	constexpr float RollUnderSideDegrees = 42.f;
 	constexpr float ModifierTapSeconds = 0.25f;
 
 	/**
@@ -177,6 +180,19 @@ namespace
 		RebuildComponentPose(Skel, Local, ComponentSpace);
 	}
 
+	void CommitComponentTranslation(const FReferenceSkeleton& Skel, int32 Bone, const FVector& Delta, TArray<FTransform>& Local, TArray<FTransform>& ComponentSpace)
+	{
+		if (!ComponentSpace.IsValidIndex(Bone) || Delta.IsNearlyZero())
+		{
+			return;
+		}
+
+		ComponentSpace[Bone].AddToTranslation(Delta);
+		const int32 Parent = Skel.GetParentIndex(Bone);
+		Local[Bone] = (Parent >= 0) ? ComponentSpace[Bone].GetRelativeTransform(ComponentSpace[Parent]) : ComponentSpace[Bone];
+		RebuildComponentPose(Skel, Local, ComponentSpace);
+	}
+
 	void AimBoneAt(const FReferenceSkeleton& Skel, int32 Bone, int32 Child, const FVector& Target, TArray<FTransform>& Local, TArray<FTransform>& ComponentSpace)
 	{
 		if (!ComponentSpace.IsValidIndex(Bone) || !ComponentSpace.IsValidIndex(Child))
@@ -284,6 +300,7 @@ AFBBoxerCharacter::AFBBoxerCharacter()
 	}
 	if (UnarmedABP.Succeeded())
 	{
+		// Kept so the asset can be found. It is not the visible body's anim class.
 		UnarmedAnimClass = UnarmedABP.Class;
 	}
 
@@ -381,6 +398,12 @@ void AFBBoxerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	DOREPLIFETIME(AFBBoxerCharacter, DefenseSlipPitch);
 	DOREPLIFETIME(AFBBoxerCharacter, DefenseSlipRoll);
 	DOREPLIFETIME(AFBBoxerCharacter, DefenseSlipEndTime);
+	DOREPLIFETIME(AFBBoxerCharacter, DefenseSlipKnee);
+	DOREPLIFETIME(AFBBoxerCharacter, HeadAxisX);
+	DOREPLIFETIME(AFBBoxerCharacter, HeadAxisY);
+	DOREPLIFETIME(AFBBoxerCharacter, HeadMoveKind);
+	DOREPLIFETIME(AFBBoxerCharacter, HeadEvasionSince);
+	DOREPLIFETIME(AFBBoxerCharacter, RollUnderSign);
 	DOREPLIFETIME(AFBBoxerCharacter, FacingLockYaw);
 	DOREPLIFETIME(AFBBoxerCharacter, FacingLockServerEndTime);
 	DOREPLIFETIME(AFBBoxerCharacter, AngleBonusServerEndTime);
@@ -633,6 +656,22 @@ bool AFBBoxerCharacter::DoesPunchConnect(EFBAttackId Attack, AActor* Target) con
 	return false;
 }
 
+FVector AFBBoxerCharacter::SeatPunchHandOnBag(const FVector& HandLocal, float GlovePadCm) const
+{
+	if (DisplayAttack == EFBAttackId::None || PunchPoseAlpha < 0.02f)
+	{
+		return HandLocal;
+	}
+	const AFBHeavyBag* Bag = Cast<AFBHeavyBag>(FindCombatTarget());
+	if (!Bag || !Bag->IsActiveBag())
+	{
+		return HandLocal;
+	}
+	const FVector WorldHand = GetActorTransform().TransformPosition(HandLocal);
+	const FVector Seated = Bag->SeatGloveCenter(WorldHand, GlovePadCm, GetActorLocation());
+	return GetActorTransform().InverseTransformPosition(Seated);
+}
+
 FVector AFBBoxerCharacter::GetGlovePoint(EFBAttackId Attack, float Alpha) const
 {
 	const FVector Extended = GetPunchVolumeCenter(Attack);
@@ -805,7 +844,16 @@ void AFBBoxerCharacter::AttachGlovesToCapsule()
 
 void AFBBoxerCharacter::AttachGlovesToHands()
 {
-	if (!PoseMesh || !bUsingMannequin)
+	USceneComponent* Parent = nullptr;
+	if (bAnimBlueprintBody)
+	{
+		Parent = GetMesh();
+	}
+	else if (PoseMesh && bUsingMannequin)
+	{
+		Parent = PoseMesh;
+	}
+	if (!Parent)
 	{
 		return;
 	}
@@ -817,7 +865,7 @@ void AFBBoxerCharacter::AttachGlovesToHands()
 		{
 			return;
 		}
-		Glove->AttachToComponent(PoseMesh, Rules, Socket);
+		Glove->AttachToComponent(Parent, Rules, Socket);
 		Glove->SetRelativeLocation(FVector(10.f, 0.f, 0.f));
 		Glove->SetRelativeRotation(FRotator::ZeroRotator);
 		Glove->SetRelativeScale3D(FVector(0.20f));
@@ -923,10 +971,77 @@ bool AFBBoxerCharacter::TryActivateSkinnedMesh()
 	return PoseMesh->BoneSpaceTransforms.Num() == SkinnedRefLocals.Num();
 }
 
+bool AFBBoxerCharacter::TryActivateAnimBlueprintBody()
+{
+	if (!BoxingAnimClass)
+	{
+		return false;
+	}
+	USkeletalMeshComponent* Skel = GetMesh();
+	if (!Skel)
+	{
+		return false;
+	}
+
+	USkeletalMesh* Asset = (CornerSkin == EFBCornerSkin::RedCorner) ? QuinnMesh.Get() : MannyMesh.Get();
+	if (!Asset)
+	{
+		Asset = MannyMesh ? MannyMesh.Get() : QuinnMesh.Get();
+	}
+	if (!Asset)
+	{
+		return false;
+	}
+	if (!Asset->GetSkeleton())
+	{
+		if (USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, TEXT("/Game/Mannequins/Meshes/SK_Mannequin.SK_Mannequin")))
+		{
+			Asset->SetSkeleton(Skeleton);
+		}
+	}
+	if (!Asset->GetSkeleton())
+	{
+		return false;
+	}
+
+	if (PoseMesh)
+	{
+		PoseMesh->SetVisibility(false);
+		PoseMesh->SetHiddenInGame(true);
+		PoseMesh->SetCastShadow(false);
+	}
+
+	Skel->SetSkeletalMesh(Asset);
+	Skel->SetAnimInstanceClass(BoxingAnimClass);
+	Skel->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	Skel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Skel->SetVisibility(true);
+	Skel->SetHiddenInGame(false);
+	Skel->SetCastShadow(true);
+	if (UAnimInstance* Anim = Skel->GetAnimInstance())
+	{
+		Anim->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
+	}
+
+	bAnimBlueprintBody = true;
+	bUsingMannequin = true;
+	HideShapeBody(true);
+	AttachGlovesToHands();
+	UE_LOG(LogTemp, Warning, TEXT("FinalBell boxing AnimBP is assigned on GetMesh. PoseMesh is hidden. This path has not been seen in play."));
+	return true;
+}
+
 void AFBBoxerCharacter::SetupMannequinVisuals()
 {
+	bAnimBlueprintBody = false;
+	if (BoxingAnimClass && TryActivateAnimBlueprintBody())
+	{
+		return;
+	}
+
 	if (USkeletalMeshComponent* Skel = GetMesh())
 	{
+		Skel->SetAnimInstanceClass(nullptr);
 		Skel->SetSkeletalMesh(nullptr);
 		Skel->SetVisibility(false);
 		Skel->SetHiddenInGame(true);
@@ -973,26 +1088,29 @@ void AFBBoxerCharacter::TintMesh(UStaticMeshComponent* MeshComp, const FLinearCo
 
 void AFBBoxerCharacter::TintSkeletalMesh(const FLinearColor& Tint)
 {
-	USkeletalMeshComponent* Skel = GetMesh();
-	if (!Skel)
+	auto Paint = [&](USkinnedMeshComponent* Skel)
 	{
-		return;
-	}
-
-	const int32 NumMats = Skel->GetNumMaterials();
-	for (int32 i = 0; i < NumMats; ++i)
-	{
-		UMaterialInterface* Base = Skel->GetMaterial(i);
-		if (!Base)
+		if (!Skel)
 		{
-			continue;
+			return;
 		}
-		if (UMaterialInstanceDynamic* MID = Skel->CreateAndSetMaterialInstanceDynamicFromMaterial(i, Base))
+		const int32 NumMats = Skel->GetNumMaterials();
+		for (int32 i = 0; i < NumMats; ++i)
 		{
-			MID->SetVectorParameterValue(TEXT("Tint"), Tint);
-			MID->SetVectorParameterValue(TEXT("Paint Color"), Tint);
+			UMaterialInterface* Base = Skel->GetMaterial(i);
+			if (!Base)
+			{
+				continue;
+			}
+			if (UMaterialInstanceDynamic* MID = Skel->CreateAndSetMaterialInstanceDynamicFromMaterial(i, Base))
+			{
+				MID->SetVectorParameterValue(TEXT("Tint"), Tint);
+				MID->SetVectorParameterValue(TEXT("Paint Color"), Tint);
+			}
 		}
-	}
+	};
+	Paint(GetMesh());
+	Paint(PoseMesh);
 }
 
 void AFBBoxerCharacter::ApplyBasicSkin(EFBCornerSkin Corner)
@@ -1079,35 +1197,243 @@ void AFBBoxerCharacter::UpdateDefensePose(float DeltaSeconds)
 {
 	float TargetPitch = 0.f;
 	float TargetRoll = 0.f;
-	const EFBGuardState Guard = CombatComponent ? CombatComponent->GetGuardState() : EFBGuardState::Open;
+	float TargetKnee = 0.f;
 	const bool bSlip = GetSyncedTimeSeconds() < DefenseSlipEndTime;
 	if (bSlip)
 	{
 		TargetPitch = DefenseSlipPitch;
 		TargetRoll = DefenseSlipRoll;
+		TargetKnee = DefenseSlipKnee;
 	}
-	else if (Guard == EFBGuardState::Weave)
+	else
 	{
-		// The owner still has the stick. Everyone else reads the step that already replicated.
-		const float Away = IsLocallyControlled() ? CachedLeftStick.Y : SmoothedMoveForward;
-		const float Side = IsLocallyControlled() ? CachedLeftStick.X : SmoothedMoveRight;
-		const float LeadX = (Stance == EFBStance::Southpaw) ? 1.f : -1.f;
-		if (Away < -0.35f)
+		const bool bOwner = IsLocallyControlled();
+		const EFBGuardState Guard = CombatComponent ? CombatComponent->GetGuardState() : EFBGuardState::Open;
+		FVector2D Axis = FVector2D::ZeroVector;
+		EFBHeadMoveKind Kind = EFBHeadMoveKind::Inactive;
+		float Sign = 0.f;
+		if (bOwner)
 		{
-			TargetPitch = LeanBackDegrees;
-			TargetRoll = -Side * 14.f;
+			if (FFBHeadMovement::ConsumesLocomotionStick(bWeaveHeld, bKnockedDown, bInClinch))
+			{
+				Axis = CachedLeftStick;
+				Kind = LocalHeadKind;
+				Sign = LocalRollUnderSign;
+			}
 		}
 		else
 		{
-			TargetPitch = RollUnderDegrees;
-			const float Drop = FMath::Abs(Side) > 0.35f ? Side : LeadX;
-			TargetRoll = -Drop * RollUnderSideDegrees;
+			Axis = FFBHeadMovement::PresentationAxes(false, FVector2D::ZeroVector, FVector2D(HeadAxisX, HeadAxisY));
+			Kind = HeadMoveKind;
+			Sign = RollUnderSign;
+			if (Kind == EFBHeadMoveKind::Inactive && Guard == EFBGuardState::Weave)
+			{
+				Kind = EFBHeadMoveKind::Neutral;
+			}
 		}
+		const FFBHeadMovement::FFBHeadPose Pose = FFBHeadMovement::PoseFromAxes(Axis, Kind, Sign, HeadMovementLimits);
+		TargetPitch = Pose.Pitch;
+		TargetRoll = Pose.Roll;
+		TargetKnee = Pose.KneeDropUU;
 	}
 
-	const float Ease = (bSlip || Guard == EFBGuardState::Weave) ? 16.f : 7.f;
+	const bool bEngaged = bSlip || (IsLocallyControlled() ? bWeaveHeld : HeadMoveKind != EFBHeadMoveKind::Inactive);
+	const float Ease = bEngaged ? 12.f : 8.f;
 	ShownDefensePitch = FMath::FInterpTo(ShownDefensePitch, TargetPitch, DeltaSeconds, Ease);
 	ShownDefenseRoll = FMath::FInterpTo(ShownDefenseRoll, TargetRoll, DeltaSeconds, Ease);
+	ShownKneeDrop = FMath::FInterpTo(ShownKneeDrop, TargetKnee, DeltaSeconds, Ease);
+}
+
+void AFBBoxerCharacter::ApplyHeadSample(FVector2D Axis, bool bActive, EFBHeadMoveKind& OutKind, FVector2D& OutAxis, float& OutSign)
+{
+	const float Now = GetSyncedTimeSeconds();
+	if (!bActive || !FFBHeadMovement::StateAllows(bKnockedDown, bInClinch))
+	{
+		HeadStickHistory.Reset();
+		LocalRollUnderUntil = -1.f;
+		OutKind = EFBHeadMoveKind::Inactive;
+		OutAxis = FVector2D::ZeroVector;
+		OutSign = 0.f;
+		return;
+	}
+
+	Axis = FFBHeadMovement::ClampAxes(Axis);
+	FFBHeadStickSample Sample;
+	Sample.Time = Now;
+	Sample.Axis = Axis;
+	HeadStickHistory.Add(Sample);
+	FFBHeadMovement::TrimHistory(HeadStickHistory, Now, FFBHeadMovement::ArcWindowSeconds + 0.1f);
+
+	float ArcSign = 0.f;
+	if (FFBHeadMovement::DetectRollUnderArc(HeadStickHistory, Now, ArcSign))
+	{
+		LocalRollUnderUntil = Now + FFBHeadMovement::RollUnderHoldSeconds;
+		LocalRollUnderSign = ArcSign;
+	}
+	const bool bHold = LocalRollUnderUntil >= 0.f && Now < LocalRollUnderUntil;
+	if (!bHold)
+	{
+		LocalRollUnderSign = 0.f;
+	}
+	OutKind = FFBHeadMovement::Classify(Axis, bHold);
+	OutAxis = Axis;
+	OutSign = bHold ? LocalRollUnderSign : 0.f;
+}
+
+void AFBBoxerCharacter::AuthorityApplyHeadMovement(FVector2D Axis, bool bActive)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	EFBHeadMoveKind Kind = EFBHeadMoveKind::Inactive;
+	FVector2D OutAxis = FVector2D::ZeroVector;
+	float Sign = 0.f;
+	ApplyHeadSample(Axis, bActive, Kind, OutAxis, Sign);
+	HeadAxisX = OutAxis.X;
+	HeadAxisY = OutAxis.Y;
+	HeadMoveKind = Kind;
+	RollUnderSign = Sign;
+	LocalHeadKind = Kind;
+	if (FFBHeadMovement::CountsAsCompletedEvasion(Kind, OutAxis, HeadMovementLimits.CompletedAxis))
+	{
+		if (HeadEvasionSince < 0.f)
+		{
+			HeadEvasionSince = GetSyncedTimeSeconds();
+		}
+	}
+	else
+	{
+		HeadEvasionSince = -1.f;
+	}
+}
+
+void AFBBoxerCharacter::ServerSetHeadMovement_Implementation(FVector2D Axis, bool bActive)
+{
+	AuthorityApplyHeadMovement(Axis, bActive);
+}
+
+void AFBBoxerCharacter::NoteHeadStick(FVector2D Axis, bool bActive)
+{
+	Axis = FFBHeadMovement::ClampAxes(Axis);
+	if (HasAuthority())
+	{
+		AuthorityApplyHeadMovement(Axis, bActive);
+		return;
+	}
+
+	EFBHeadMoveKind Kind = EFBHeadMoveKind::Inactive;
+	FVector2D OutAxis = FVector2D::ZeroVector;
+	float Sign = 0.f;
+	ApplyHeadSample(Axis, bActive, Kind, OutAxis, Sign);
+	LocalHeadKind = Kind;
+	const float Now = GetSyncedTimeSeconds();
+	const bool bChanged = bActive != bLastSentHeadActive || FVector2D::Distance(Axis, LastSentHeadAxis) > 0.04f || (Now - LastSentHeadTime) > 0.08f;
+	if (bChanged)
+	{
+		ServerSetHeadMovement(Axis, bActive);
+		LastSentHeadAxis = Axis;
+		LastSentHeadTime = Now;
+		bLastSentHeadActive = bActive;
+	}
+}
+
+bool AFBBoxerCharacter::IsWeaveKeyDown() const
+{
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return false;
+	}
+	if (PC->GetInputAnalogKeyState(EKeys::Gamepad_LeftTriggerAxis) > 0.35f)
+	{
+		return true;
+	}
+	return PC->IsInputKeyDown(EKeys::Gamepad_LeftTrigger) || PC->IsInputKeyDown(EKeys::LeftControl);
+}
+
+bool AFBBoxerCharacter::IsBlockKeyDown() const
+{
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return false;
+	}
+	if (PC->GetInputAnalogKeyState(EKeys::Gamepad_RightTriggerAxis) > 0.35f)
+	{
+		return true;
+	}
+	return PC->IsInputKeyDown(EKeys::Gamepad_RightTrigger) || PC->IsInputKeyDown(EKeys::LeftShift);
+}
+
+void AFBBoxerCharacter::ForceReleaseDefenseInputs()
+{
+	const bool bWasWeaving = bWeaveHeld;
+	const bool bWasBlocking = bBlockHeld;
+	bWeaveHeld = false;
+	bBlockHeld = false;
+	bBlockGuardSent = false;
+	if (bWasWeaving)
+	{
+		NoteHeadStick(FVector2D::ZeroVector, false);
+	}
+	if (bWasBlocking || bWasWeaving)
+	{
+		SubmitLocalIntent(EFBAttackId::None, false, EFBGuardState::Open);
+	}
+}
+
+void AFBBoxerCharacter::LogDefenseState(const TCHAR* Event) const
+{
+#if !UE_BUILD_SHIPPING
+	const APlayerController* PC = Cast<APlayerController>(GetController());
+	const float L2 = PC ? PC->GetInputAnalogKeyState(EKeys::Gamepad_LeftTriggerAxis) : 0.f;
+	const float R2 = PC ? PC->GetInputAnalogKeyState(EKeys::Gamepad_RightTriggerAxis) : 0.f;
+	const bool bCtrl = PC && PC->IsInputKeyDown(EKeys::LeftControl);
+	const bool bShift = PC && PC->IsInputKeyDown(EKeys::LeftShift);
+	const EFBGuardState Guard = CombatComponent ? CombatComponent->GetGuardState() : EFBGuardState::Open;
+	const EFBHeadMoveKind Kind = IsLocallyControlled() ? LocalHeadKind : HeadMoveKind;
+	const int32 WeaveRaw = IsWeaveKeyDown() ? 1 : 0;
+	const int32 BlockRaw = IsBlockKeyDown() ? 1 : 0;
+	UE_LOG(LogTemp, Log, TEXT("FinalBell defense %s L2=%.2f R2=%.2f ctrl=%d shift=%d rawL2=%d rawR2=%d weave=%d block=%d guard=%d stick=(%.2f,%.2f) kind=%d pitch=%.1f roll=%.1f knee=%.1f weight=%.2f map=%d focus=%d"),
+		Event,
+		L2,
+		R2,
+		bCtrl ? 1 : 0,
+		bShift ? 1 : 0,
+		WeaveRaw,
+		BlockRaw,
+		bWeaveHeld ? 1 : 0,
+		bBlockHeld ? 1 : 0,
+		static_cast<int32>(Guard),
+		CachedLeftStick.X,
+		CachedLeftStick.Y,
+		static_cast<int32>(Kind),
+		ShownDefensePitch,
+		ShownDefenseRoll,
+		ShownKneeDrop,
+		DefensePoseWeight(),
+		bFightMappingApplied ? 1 : 0,
+		ControllerWantsFightMapping() ? 1 : 0);
+	if (GEngine && IsLocallyControlled())
+	{
+		GEngine->AddOnScreenDebugMessage(
+			61,
+			0.25f,
+			FColor::Silver,
+			FString::Printf(TEXT("Defense %s  L2 %.2f  R2 %.2f  guard %d  stick %.2f %.2f  pitch %.0f roll %.0f"),
+				Event, L2, R2, static_cast<int32>(Guard), CachedLeftStick.X, CachedLeftStick.Y, ShownDefensePitch, ShownDefenseRoll));
+	}
+#else
+	(void)Event;
+#endif
+}
+
+float AFBBoxerCharacter::DefensePoseWeight() const
+{
+	const float PitchMax = FMath::Max3(HeadMovementLimits.NeutralPitch, HeadMovementLimits.LevelPitch, FMath::Max(HeadMovementLimits.RollUnderPitch, FMath::Abs(HeadMovementLimits.LeanBackPitch)));
+	const float RollMax = FMath::Max(HeadMovementLimits.SlipRoll, 1.f);
+	return FMath::Clamp(FMath::Max(FMath::Abs(ShownDefensePitch) / FMath::Max(PitchMax, 1.f), FMath::Abs(ShownDefenseRoll) / RollMax), 0.f, 1.f);
 }
 
 void AFBBoxerCharacter::UpdateBoxerPose(float DeltaSeconds)
@@ -1119,6 +1445,10 @@ void AFBBoxerCharacter::UpdateBoxerPose(float DeltaSeconds)
 	const FVector LocalVelocity = GetActorRotation().UnrotateVector(GetVelocity());
 	SmoothedMoveForward = FMath::FInterpTo(SmoothedMoveForward, FMath::Clamp(LocalVelocity.X / 320.f, -1.f, 1.f), DeltaSeconds, 3.5f);
 	SmoothedMoveRight = FMath::FInterpTo(SmoothedMoveRight, FMath::Clamp(LocalVelocity.Y / 320.f, -1.f, 1.f), DeltaSeconds, 3.5f);
+	if (bAnimBlueprintBody)
+	{
+		return;
+	}
 	if (bUsingMannequin)
 	{
 		ApplySkinnedPose(DeltaSeconds);
@@ -1131,6 +1461,7 @@ void AFBBoxerCharacter::UpdateBoxerPose(float DeltaSeconds)
 
 void AFBBoxerCharacter::ApplyShapePose()
 {
+	const FFBVisualProportions Prop = FFBBoxerCustomization::ProportionsFor(FighterRecord.Look);
 	auto Side = [this](FVector Point)
 	{
 		if (Stance == EFBStance::Southpaw)
@@ -1187,17 +1518,18 @@ void AFBBoxerCharacter::ApplyShapePose()
 		RearHand.X += 6.f;
 	}
 	Head.Z -= ShownDefensePitch * 0.55f;
+	Head.Z -= ShownKneeDrop;
 	// Positive roll is the fighter's left in both stances. Left is -Y on the capsule.
 	Head.Y -= ShownDefenseRoll * 0.62f;
 	if (ShownDefensePitch > 8.f)
 	{
-		const float Drop = FMath::Min(ShownDefensePitch, 74.f) * 0.35f;
+		const float Drop = FMath::Min(ShownDefensePitch, HeadMovementLimits.RollUnderPitch) * 0.35f;
 		LeadHand.Z -= Drop;
 		RearHand.Z -= Drop;
 	}
 	else if (ShownDefensePitch < -8.f)
 	{
-		const float Lift = FMath::Min(-ShownDefensePitch, 58.f) * 0.18f;
+		const float Lift = FMath::Min(-ShownDefensePitch, FMath::Abs(HeadMovementLimits.LeanBackPitch)) * 0.18f;
 		LeadHand.Z += Lift;
 		RearHand.Z += Lift;
 	}
@@ -1260,6 +1592,17 @@ void AFBBoxerCharacter::ApplyShapePose()
 		RearHand.Y -= LeadSign * 18.f;
 	}
 
+	const bool bShapeLeadPunch = DisplayAttack == EFBAttackId::Jab || DisplayAttack == EFBAttackId::LeadHook || DisplayAttack == EFBAttackId::LeadUppercut;
+	const bool bShapeRearPunch = DisplayAttack == EFBAttackId::Cross || DisplayAttack == EFBAttackId::RearHook || DisplayAttack == EFBAttackId::RearUppercut;
+	if (bShapeLeadPunch)
+	{
+		LeadHand = SeatPunchHandOnBag(LeadHand, 14.f);
+	}
+	else if (bShapeRearPunch)
+	{
+		RearHand = SeatPunchHandOnBag(RearHand, 14.f);
+	}
+
 	const float ShapeLead = (Stance == EFBStance::Southpaw) ? -1.f : 1.f;
 	const float ShapeStep = SmoothedMoveForward * 6.f * GuardLife * ShapeLead;
 	const FFBWaistTwist ShapeTwist = BuildWaistTwist(ComputeDisplayedPunchYaw() + ShapeStep, FacingYawOffset + MovementYawLag, HurtYaw);
@@ -1267,29 +1610,30 @@ void AFBBoxerCharacter::ApplyShapePose()
 	{
 		const float BodyDip = bDisplayBody ? 16.f * PunchPoseAlpha : 0.f;
 		const float Chest = Breath * 3.5f * GuardLife;
-		const float DefenseWeight = FMath::Clamp(FMath::Max(FMath::Abs(ShownDefensePitch) / 74.f, FMath::Abs(ShownDefenseRoll) / 48.f), 0.f, 1.f);
+		const float DefenseWeight = DefensePoseWeight();
 		const float Roll = (Sway * 7.f - SmoothedMoveRight * 8.f) * GuardLife * (1.f - 0.8f * DefenseWeight);
 		const float ChestYaw = ShapeTwist.WaistYaw + ShapeTwist.MidYaw + ShapeTwist.ChestYaw;
 		const float DefenseDrop = FMath::Max(0.f, ShownDefensePitch) * 0.12f;
 		BodyMesh->SetRelativeLocation(FVector(2.f + BodyDip * 0.4f, Roll * 0.15f, 8.f - DefenseDrop - BodyDip * 0.15f + Chest * 0.08f));
 		BodyMesh->SetRelativeRotation(FRotator(BodyDip + Chest + HurtLean + ShownDefensePitch * 0.78f, ChestYaw, Roll + ShownDefenseRoll * 0.78f));
-		BodyMesh->SetRelativeScale3D(FVector(0.26f, 0.38f, 0.48f));
+		BodyMesh->SetRelativeScale3D(FVector(0.26f * Prop.ChestBulk, 0.38f * Prop.ChestBulk, 0.48f * Prop.SpineLength));
 	}
 	if (TrunksMesh)
 	{
+		const float TrunkLength = FighterRecord.Look.TrunksStyle == 2 ? 0.24f : (FighterRecord.Look.TrunksStyle == 1 ? 0.14f : 0.18f);
 		TrunksMesh->SetRelativeLocation(FVector(0.f, 0.f, -28.f));
 		TrunksMesh->SetRelativeRotation(FRotator(ShownDefensePitch * 0.22f, ShapeTwist.PelvisYaw, ShownDefenseRoll * 0.22f));
-		TrunksMesh->SetRelativeScale3D(FVector(0.40f, 0.32f, 0.18f));
+		TrunksMesh->SetRelativeScale3D(FVector(0.40f * Prop.WaistBulk, 0.32f * Prop.WaistBulk, TrunkLength));
 	}
-	const float HeadScale = 0.30f;
+	const float HeadScale = 0.30f * (Prop.HeadWidth + Prop.HeadLength) * 0.5f;
 	PlaceBall(HeadMesh, Head, HeadScale);
-	PlaceBall(LeadGloveMesh, LeadHand, 0.30f);
-	PlaceBall(RearGloveMesh, RearHand, 0.30f);
+	PlaceBall(LeadGloveMesh, LeadHand, 0.30f * Prop.GloveBulk);
+	PlaceBall(RearGloveMesh, RearHand, 0.30f * Prop.GloveBulk);
 
-	PlaceBone(LeadUpperArmMesh, LeadShoulder, LeadElbow, 7.f);
-	PlaceBone(LeadForearmMesh, LeadElbow, LeadHand, 5.5f);
-	PlaceBone(RearUpperArmMesh, RearShoulder, RearElbow, 7.f);
-	PlaceBone(RearForearmMesh, RearElbow, RearHand, 5.5f);
+	PlaceBone(LeadUpperArmMesh, LeadShoulder, LeadElbow, 7.f * Prop.UpperArmBulk);
+	PlaceBone(LeadForearmMesh, LeadElbow, LeadHand, 5.5f * Prop.ForearmBulk);
+	PlaceBone(RearUpperArmMesh, RearShoulder, RearElbow, 7.f * Prop.UpperArmBulk);
+	PlaceBone(RearForearmMesh, RearElbow, RearHand, 5.5f * Prop.ForearmBulk);
 
 	const FVector LeadHip = Side(FVector(8.f, -9.f, -22.f));
 	const FVector RearHip = Side(FVector(-4.f, 9.f, -24.f));
@@ -1297,10 +1641,10 @@ void AFBBoxerCharacter::ApplyShapePose()
 	const FVector RearKnee = Side(FVector(-6.f, 10.f, -54.f));
 	const FVector LeadAnkle = Side(FVector(20.f, -14.f, -84.f));
 	const FVector RearAnkle = Side(FVector(-8.f, 12.f, -84.f));
-	PlaceBone(LeadThighMesh, LeadHip, LeadKnee, 9.f);
-	PlaceBone(LeadShinMesh, LeadKnee, LeadAnkle, 6.5f);
-	PlaceBone(RearThighMesh, RearHip, RearKnee, 9.f);
-	PlaceBone(RearShinMesh, RearKnee, RearAnkle, 6.5f);
+	PlaceBone(LeadThighMesh, LeadHip, LeadKnee, 9.f * Prop.ThighBulk);
+	PlaceBone(LeadShinMesh, LeadKnee, LeadAnkle, 6.5f * Prop.CalfBulk);
+	PlaceBone(RearThighMesh, RearHip, RearKnee, 9.f * Prop.ThighBulk);
+	PlaceBone(RearShinMesh, RearKnee, RearAnkle, 6.5f * Prop.CalfBulk);
 
 	if (LeadShoeMesh)
 	{
@@ -1358,6 +1702,26 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	const bool bPower = CombatComponent && CombatComponent->IsPowerShot() && DisplayAttack != EFBAttackId::None;
 
 	TArray<FTransform> Local = SkinnedRefLocals;
+	const FFBVisualProportions Prop = FFBBoxerCustomization::ProportionsFor(FighterRecord.Look);
+	auto ScaleBone = [&](const TCHAR* Name, float Length, float Bulk)
+	{
+		const int32 Index = PoseMesh->GetBoneIndex(FName(Name));
+		if (!Local.IsValidIndex(Index))
+		{
+			return;
+		}
+		const FVector Base = Local[Index].GetScale3D();
+		// Mannequin bone length is X. Y and Z are thickness, so the child stays on the punch target.
+		Local[Index].SetScale3D(FVector(Base.X * Length, Base.Y * Bulk, Base.Z * Bulk));
+	};
+	// Length only, before the punch IK. Thickness is applied after the hands are seated.
+	ScaleBone(TEXT("spine_01"), Prop.SpineLength, 1.f);
+	ScaleBone(TEXT("clavicle_l"), Prop.ShoulderLength, 1.f);
+	ScaleBone(TEXT("clavicle_r"), Prop.ShoulderLength, 1.f);
+	ScaleBone(TEXT("upperarm_l"), Prop.UpperArmLength, 1.f);
+	ScaleBone(TEXT("upperarm_r"), Prop.UpperArmLength, 1.f);
+	ScaleBone(TEXT("thigh_l"), Prop.ThighLength, 1.f);
+	ScaleBone(TEXT("thigh_r"), Prop.ThighLength, 1.f);
 	TArray<FTransform> ComponentSpace;
 	RebuildComponentPose(Skel, Local, ComponentSpace);
 
@@ -1371,7 +1735,7 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	float Chin = 16.f;
 	if (ShownDefensePitch > 12.f)
 	{
-		Chin += 22.f;
+		Chin += 6.f;
 	}
 	else if (ShownDefensePitch < -12.f)
 	{
@@ -1391,9 +1755,9 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 		Chin -= 14.f * PunchPoseAlpha;
 	}
 
-	const float GuardLife = FMath::Lerp(1.f, 0.22f, PunchPoseAlpha) * (Guard == EFBGuardState::Weave ? 0.35f : 1.f);
+	const float GuardLife = FMath::Lerp(1.f, 0.22f, PunchPoseAlpha);
 	const float Breath = FMath::Sin(PoseClock * 1.7f) * 3.6f * GuardLife;
-	const float DefenseWeight = FMath::Clamp(FMath::Max(FMath::Abs(ShownDefensePitch) / 74.f, FMath::Abs(ShownDefenseRoll) / 48.f), 0.f, 1.f);
+	const float DefenseWeight = DefensePoseWeight();
 	const float ShoulderRoll = (FMath::Sin(PoseClock * 1.15f) * 7.f - SmoothedMoveRight * 9.f) * GuardLife * LeadYaw * (1.f - 0.8f * DefenseWeight);
 	const float StepYaw = (SmoothedMoveForward * 7.f + FMath::Sin(PoseClock * 0.85f) * 3.2f) * GuardLife * LeadYaw;
 	const float TorsoLean = Lean + Breath + HurtLean;
@@ -1429,6 +1793,10 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	}
 
 	CommitComponentRotation(Skel, Pelvis, FQuat(MeshRight, FMath::DegreesToRadians(Bend.PelvisPitch)) * FQuat(MeshUp, FMath::DegreesToRadians(14.f * LeadYaw + Twist.PelvisYaw)) * FQuat(MeshForward, FMath::DegreesToRadians(Bend.PelvisRoll)), Local, ComponentSpace);
+	if (ShownKneeDrop > 0.5f)
+	{
+		CommitComponentTranslation(Skel, Pelvis, -MeshUp * ShownKneeDrop, Local, ComponentSpace);
+	}
 
 	const float LowShare = bHasMidSpine ? 0.28f : 0.45f;
 	const float MidShare = bHasMidSpine ? 0.32f : 0.f;
@@ -1530,13 +1898,13 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	}
 	if (ShownDefensePitch > 8.f)
 	{
-		const float Drop = FMath::Min(ShownDefensePitch, 74.f) * 0.42f;
+		const float Drop = FMath::Min(ShownDefensePitch, HeadMovementLimits.RollUnderPitch) * 0.42f;
 		LeadHand.Z -= Drop;
 		RearHand.Z -= Drop;
 	}
 	else if (ShownDefensePitch < -8.f)
 	{
-		const float Lift = FMath::Min(-ShownDefensePitch, 58.f) * 0.22f;
+		const float Lift = FMath::Min(-ShownDefensePitch, FMath::Abs(HeadMovementLimits.LeanBackPitch)) * 0.22f;
 		LeadHand.Z += Lift;
 		RearHand.Z += Lift;
 	}
@@ -1606,8 +1974,43 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	LeadHand.Z = FMath::Min(LeadHand.Z, CheekZ);
 	RearHand.Z = FMath::Min(RearHand.Z, CheekZ);
 
+	// The mannequin glove sits about 10 cm past the hand bone, and the fingers continue past that.
+	if (bLeadPunch)
+	{
+		LeadHand = SeatPunchHandOnBag(LeadHand, 16.f);
+	}
+	else if (bRearPunch)
+	{
+		RearHand = SeatPunchHandOnBag(RearHand, 16.f);
+	}
+
 	SolveLimb(Skel, LeadUpper, LeadLower, LeadHandBone, ToMesh(LeadHand), ToMesh(LeadPole), Local, ComponentSpace);
 	SolveLimb(Skel, RearUpper, RearLower, RearHandBone, ToMesh(RearHand), ToMesh(RearPole), Local, ComponentSpace);
+
+	auto BulkBone = [&](const TCHAR* Name, float Bulk, float Length = 1.f)
+	{
+		const int32 Index = PoseMesh->GetBoneIndex(FName(Name));
+		if (!Local.IsValidIndex(Index))
+		{
+			return;
+		}
+		const FVector Base = Local[Index].GetScale3D();
+		Local[Index].SetScale3D(FVector(Base.X * Length, Bulk, Bulk));
+	};
+	BulkBone(TEXT("spine_01"), Prop.WaistBulk);
+	BulkBone(TEXT("spine_03"), Prop.ChestBulk);
+	BulkBone(TEXT("clavicle_l"), Prop.ShoulderBulk);
+	BulkBone(TEXT("clavicle_r"), Prop.ShoulderBulk);
+	BulkBone(TEXT("upperarm_l"), Prop.UpperArmBulk);
+	BulkBone(TEXT("upperarm_r"), Prop.UpperArmBulk);
+	BulkBone(TEXT("lowerarm_l"), Prop.ForearmBulk);
+	BulkBone(TEXT("lowerarm_r"), Prop.ForearmBulk);
+	BulkBone(TEXT("thigh_l"), Prop.ThighBulk);
+	BulkBone(TEXT("thigh_r"), Prop.ThighBulk);
+	BulkBone(TEXT("calf_l"), Prop.CalfBulk);
+	BulkBone(TEXT("calf_r"), Prop.CalfBulk);
+	BulkBone(TEXT("neck_01"), Prop.NeckBulk);
+	BulkBone(TEXT("head"), Prop.HeadWidth, Prop.HeadLength);
 
 	PoseMesh->BoneSpaceTransforms = Local;
 	PoseMesh->MarkRefreshTransformDirty();
@@ -1693,6 +2096,10 @@ bool AFBBoxerCharacter::ControllerWantsFightMapping() const
 
 void AFBBoxerCharacter::ClearMappingContext()
 {
+	if (bWeaveHeld || bBlockHeld)
+	{
+		ForceReleaseDefenseInputs();
+	}
 	bFightMappingApplied = false;
 	ULocalPlayer* LocalPlayer = FightMappingPlayer.Get();
 	if (!LocalPlayer)
@@ -1815,16 +2222,36 @@ void AFBBoxerCharacter::Tick(float DeltaSeconds)
 
 	if (HasAuthority() || IsLocallyControlled())
 	{
-		bool bBagTraining = false;
+		AFBHeavyBag* TrainingBag = nullptr;
 		for (TActorIterator<AFBHeavyBag> It(GetWorld()); It; ++It)
 		{
 			if (It->IsActiveBag())
 			{
-				bBagTraining = true;
+				TrainingBag = *It;
 				break;
 			}
 		}
-		if (!bBagTraining)
+		if (TrainingBag && GetCapsuleComponent())
+		{
+			// The leather overlaps the pawn so a swing cannot launch the capsule.
+			// Keep the body on the outside of that cylinder. The punch spheres are not resized.
+			const FVector Center = TrainingBag->GetStrikeCenter();
+			const float Keep = GetCapsuleComponent()->GetScaledCapsuleRadius() + AFBHeavyBag::BodyDiameterCm() * 0.5f + 8.f;
+			const FVector Loc = GetActorLocation();
+			FVector Flat = Loc - Center;
+			Flat.Z = 0.f;
+			const float Dist = Flat.Size();
+			if (Dist < Keep)
+			{
+				FVector Dir = (Dist > 1.f) ? (Flat / Dist) : (-GetActorForwardVector().GetSafeNormal2D());
+				if (Dir.IsNearlyZero())
+				{
+					Dir = FVector(-1.f, 0.f, 0.f);
+				}
+				SetActorLocation(FVector(Center.X, Center.Y, Loc.Z) + FVector(Dir.X, Dir.Y, 0.f) * Keep, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+		}
+		if (!TrainingBag)
 		{
 			for (TActorIterator<AFBRingBounds> It(GetWorld()); It; ++It)
 			{
@@ -1879,16 +2306,40 @@ void AFBBoxerCharacter::Tick(float DeltaSeconds)
 	if (bLeftThumbDown && !bRightThumbDown && GetWorld() && GetWorld()->GetTimeSeconds() - LeftThumbTime > 0.14f && LeftThumbTime > 0.f)
 	{
 		LeftThumbTime = -1.f;
-		if (!bInClinch && CachedLeftStick.Size() > 0.35f)
+		if (!bInClinch && CachedLeftStick.Size() > 0.22f)
 		{
 			BeginDefenseSlip(CachedLeftStick);
 			SubmitRingAction(EFBRingAction::Slip);
 		}
 	}
 
+	if ((bKnockedDown || bInClinch) && (bWeaveHeld || HeadMoveKind != EFBHeadMoveKind::Inactive))
+	{
+		if (IsLocallyControlled())
+		{
+			bWeaveHeld = false;
+			NoteHeadStick(FVector2D::ZeroVector, false);
+		}
+		else if (HasAuthority())
+		{
+			AuthorityApplyHeadMovement(FVector2D::ZeroVector, false);
+		}
+	}
+
 	UpdateQueryVolumes();
 	RefreshCombatPresentation();
 	UpdateBoxerPose(DeltaSeconds);
+#if !UE_BUILD_SHIPPING
+	if (IsLocallyControlled() && CVarFBDebugDefense.GetValueOnGameThread() != 0)
+	{
+		DefenseDebugAccum += DeltaSeconds;
+		if (DefenseDebugAccum >= 0.20f)
+		{
+			DefenseDebugAccum = 0.f;
+			LogDefenseState(TEXT("sample"));
+		}
+	}
+#endif
 }
 
 void AFBBoxerCharacter::UpdateFacingOffset(float DeltaSeconds)
@@ -2078,6 +2529,10 @@ void AFBBoxerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 
 void AFBBoxerCharacter::PushSmoothedMove()
 {
+	if (FFBHeadMovement::ConsumesLocomotionStick(bWeaveHeld, bKnockedDown, bInClinch))
+	{
+		return;
+	}
 	if (SmoothedMoveStick.SizeSquared() < FMath::Square(0.05f))
 	{
 		return;
@@ -2091,6 +2546,11 @@ void AFBBoxerCharacter::PushSmoothedMove()
 
 void AFBBoxerCharacter::FadeReleasedMove(float DeltaSeconds)
 {
+	if (FFBHeadMovement::ConsumesLocomotionStick(bWeaveHeld, bKnockedDown, bInClinch))
+	{
+		SmoothedMoveStick = FVector2D::ZeroVector;
+		return;
+	}
 	if (bMoveHeld)
 	{
 		return;
@@ -2108,6 +2568,13 @@ void AFBBoxerCharacter::Move(const FInputActionValue& Value)
 {
 	FVector2D Axis = Value.Get<FVector2D>();
 	CachedLeftStick = Axis;
+	if (FFBHeadMovement::ConsumesLocomotionStick(bWeaveHeld, bKnockedDown, bInClinch))
+	{
+		bMoveHeld = false;
+		SmoothedMoveStick = FVector2D::ZeroVector;
+		NoteHeadStick(Axis, true);
+		return;
+	}
 	bMoveHeld = true;
 	if (bKnockedDown || bInClinch)
 	{
@@ -2139,6 +2606,11 @@ void AFBBoxerCharacter::OnMoveReleased(const FInputActionValue& Value)
 	(void)Value;
 	CachedLeftStick = FVector2D::ZeroVector;
 	bMoveHeld = false;
+	if (bWeaveHeld && FFBHeadMovement::StateAllows(bKnockedDown, bInClinch))
+	{
+		NoteHeadStick(FVector2D::ZeroVector, true);
+		return;
+	}
 	RefreshBlockHeight();
 }
 
@@ -2265,31 +2737,39 @@ void AFBBoxerCharacter::OnBlockStarted()
 	bBlockHeld = true;
 	bBlockGuardSent = false;
 	RefreshBlockHeight();
+	LogDefenseState(TEXT("R2 down"));
 }
 
 void AFBBoxerCharacter::OnBlockCompleted()
 {
 	bBlockHeld = false;
 	bBlockGuardSent = false;
-	if (bWeaveHeld)
-	{
-		SubmitLocalIntent(EFBAttackId::None, true, EFBGuardState::Weave);
-	}
-	else
-	{
-		SubmitLocalIntent(EFBAttackId::None, false, EFBGuardState::Open);
-	}
+	LogDefenseState(TEXT("R2 up"));
+	SubmitLocalIntent(EFBAttackId::None, false, EFBGuardState::Open);
 }
 
 void AFBBoxerCharacter::OnWeaveStarted()
 {
 	bWeaveHeld = true;
-	SubmitLocalIntent(EFBAttackId::None, true, EFBGuardState::Weave);
+	SmoothedMoveStick = FVector2D::ZeroVector;
+	bMoveHeld = false;
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+	}
+	LogDefenseState(TEXT("L2 down"));
+	if (!FFBHeadMovement::StateAllows(bKnockedDown, bInClinch))
+	{
+		return;
+	}
+	NoteHeadStick(CachedLeftStick, true);
 }
 
 void AFBBoxerCharacter::OnWeaveCompleted()
 {
 	bWeaveHeld = false;
+	LogDefenseState(TEXT("L2 up"));
+	NoteHeadStick(FVector2D::ZeroVector, false);
 	if (bBlockHeld)
 	{
 		bBlockGuardSent = false;
@@ -2371,7 +2851,7 @@ void AFBBoxerCharacter::OnLeftThumbPressed()
 		SubmitRingAction(EFBRingAction::StartClinch);
 		return;
 	}
-	if (!bInClinch && CachedLeftStick.Size() > 0.35f)
+	if (!bInClinch && CachedLeftStick.Size() > 0.22f)
 	{
 		LeftThumbTime = -1.f;
 		BeginDefenseSlip(CachedLeftStick);
@@ -2518,16 +2998,20 @@ EFBAttackId AFBBoxerCharacter::AttackFromStick() const
 
 EFBGuardState AFBBoxerCharacter::BlockGuardFromStick() const
 {
-	return CachedLeftStick.Y < -0.45f ? EFBGuardState::Low : EFBGuardState::High;
+	return FFBHeadMovement::SelectBlockGuard(true, false, false, CachedLeftStick.Y, HeadMovementLimits.LowGuardStickY);
 }
 
 void AFBBoxerCharacter::RefreshBlockHeight()
 {
-	if (!bBlockHeld || bWeaveHeld || !IsLocallyControlled() || bKnockedDown)
+	if (!bBlockHeld || !IsLocallyControlled() || bKnockedDown)
 	{
 		return;
 	}
-	const EFBGuardState Want = BlockGuardFromStick();
+	const bool bConsume = FFBHeadMovement::ConsumesLocomotionStick(bWeaveHeld, bKnockedDown, bInClinch);
+	const bool bLatchedLow = bBlockGuardSent && SentBlockGuard == EFBGuardState::Low;
+	const EFBGuardState Want = bConsume
+		? FFBHeadMovement::SelectBlockGuard(true, true, bLatchedLow, CachedLeftStick.Y, HeadMovementLimits.LowGuardStickY)
+		: BlockGuardFromStick();
 	if (bBlockGuardSent && SentBlockGuard == Want)
 	{
 		return;
@@ -3011,6 +3495,21 @@ float AFBBoxerCharacter::ApplyAuthoritativeDamage(float Amount, int32 AttackInst
 	return Added;
 }
 
+void AFBBoxerCharacter::RestoreForNextRound()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	HeadDamage = FMath::Max(0.f, HeadDamage * RestHeadKept);
+	BodyDamage = FMath::Max(0.f, BodyDamage * RestBodyKept);
+	AccumulatedDamage = HeadDamage + BodyDamage;
+	Stun = 0.f;
+	PendingDazeStun = 0.f;
+	BlockHealth = BlockHealthMax;
+	ApplyConditionToMovement();
+}
+
 bool AFBBoxerCharacter::ApplyFighterRecord(const FFBFighterRecord& Record, FString& OutWhy)
 {
 	if (!HasAuthority())
@@ -3212,7 +3711,11 @@ namespace
 void AFBBoxerCharacter::PreviewCreatorLook(const FFBPresentation& Look)
 {
 	FighterRecord.Look = Look;
-	BaseSkin = SkinFromMap(Look.SkinU, Look.SkinV);
+	if (FighterRecord.Look.LookVersion <= FFBBoxerCustomization::ProfileVersion)
+	{
+		FFBBoxerCustomization::Sanitize(FighterRecord.Look);
+	}
+	BaseSkin = SkinFromMap(FighterRecord.Look.SkinU, FighterRecord.Look.SkinV);
 	ApplyPresentation();
 }
 
@@ -3220,10 +3723,14 @@ void AFBBoxerCharacter::ApplyPresentation()
 {
 	EnsureDamageMarkers();
 	const FFBPresentation& Look = FighterRecord.Look;
+	const FFBVisualProportions Prop = FFBBoxerCustomization::ProportionsFor(Look);
 	BaseSkin = SkinFromMap(Look.SkinU, Look.SkinV);
 	TintMesh(HeadMesh, BaseSkin);
 	TintMesh(BodyMesh, BaseSkin);
 	TintSkeletalMesh(BaseSkin);
+	TintMesh(TrunksMesh, GearPalette(Look.TrunksColor));
+	TintMesh(LeadShoeMesh, GearPalette(Look.ShoeColor));
+	TintMesh(RearShoeMesh, GearPalette(Look.ShoeColor));
 	if (HairMesh)
 	{
 		const bool bShow = Look.Hair != EFBHairStyle::Bald;
@@ -3241,6 +3748,7 @@ void AFBBoxerCharacter::ApplyPresentation()
 		BeardMesh->SetHiddenInGame(!bShow);
 		const float Bulk = 0.03f + 0.03f * static_cast<float>(FMath::Clamp(Look.Beard, 0, 3));
 		BeardMesh->SetRelativeScale3D(FVector(Bulk, Bulk * 0.7f, Look.Mustache > 0 ? Bulk * 0.4f : Bulk * 0.2f));
+		BeardMesh->SetRelativeLocation(FVector(8.f, Prop.Asymmetry * 0.25f, -6.f + Prop.ChinOffset));
 		TintMesh(BeardMesh, FMath::Lerp(FLinearColor(0.08f, 0.07f, 0.06f), FLinearColor(0.7f, 0.7f, 0.68f), Look.HairGray));
 	}
 	if (TattooMesh)
@@ -3257,12 +3765,24 @@ void AFBBoxerCharacter::ApplyPresentation()
 		const bool bShow = Look.Scar > 0;
 		ScarMesh->SetVisibility(bShow);
 		ScarMesh->SetHiddenInGame(!bShow);
-		const float Shift = (Look.Asymmetry - 0.5f) * 4.f;
-		ScarMesh->SetRelativeLocation(FVector(10.f, Shift, 6.f - static_cast<float>(Look.Scar)));
+		const float ScarZ = Look.Scar == 1 ? 8.f + Prop.BrowOffset : (Look.Scar == 3 ? -1.f + Prop.NoseOffset : 2.f + Prop.CheekOffset);
+		ScarMesh->SetRelativeLocation(FVector(10.f + Prop.NoseOffset * 0.2f, Prop.Asymmetry, ScarZ));
 	}
-	const float Muscle = FMath::Clamp(FMath::Max(Look.Muscle, Look.Muscularity), 0.f, 1.f);
-	const float Glove = 0.18f + 0.05f * Muscle;
+	const float Glove = 0.205f * Prop.GloveBulk;
 	const FLinearColor Gloves = GearPalette(Look.GloveColor);
+	const bool bShowWraps = Look.WrapStyle > 0 || Look.Accessory == 2;
+	auto ShowWrap = [&](UStaticMeshComponent* Wrap)
+	{
+		if (!Wrap)
+		{
+			return;
+		}
+		Wrap->SetVisibility(bShowWraps);
+		Wrap->SetHiddenInGame(!bShowWraps);
+		TintMesh(Wrap, GearPalette(Look.WrapColor));
+	};
+	ShowWrap(LeadWrapMesh);
+	ShowWrap(RearWrapMesh);
 	if (LeadGloveMesh)
 	{
 		LeadGloveMesh->SetRelativeScale3D(FVector(bUsingMannequin ? Glove * 0.7f : Glove));
@@ -3354,52 +3874,36 @@ int32 AFBBoxerCharacter::AuthorityNoteFoul()
 
 void AFBBoxerCharacter::BeginDefenseSlip(FVector2D Axis)
 {
-	const FVector2D N = Axis.GetSafeNormal();
-	if (N.IsNearlyZero())
+	const float Lead = (Stance == EFBStance::Southpaw) ? 1.f : -1.f;
+	const FFBHeadMovement::FFBHeadPose Pose = FFBHeadMovement::ExplicitSlipPose(Axis, Lead, HeadMovementLimits);
+	if (FMath::IsNearlyZero(Pose.Pitch, 0.05f) && FMath::IsNearlyZero(Pose.Roll, 0.05f) && Pose.KneeDropUU < 0.5f)
 	{
 		return;
 	}
 
-	float Pitch = 18.f;
-	float Roll = 0.f;
-	if (FMath::Abs(N.X) >= FMath::Abs(N.Y))
-	{
-		// Stick right is +X. Positive roll moves the head to the fighter's left.
-		Roll = -N.X * SideRollDegrees;
-		Pitch = 18.f;
-	}
-	else if (N.Y < 0.f)
-	{
-		Pitch = LeanBackDegrees;
-		Roll = -N.X * 14.f;
-	}
-	else
-	{
-		Pitch = RollUnderDegrees;
-		const float LeadX = (Stance == EFBStance::Southpaw) ? 1.f : -1.f;
-		const float Side = FMath::Abs(N.X) > 0.2f ? N.X : LeadX;
-		Roll = -Side * RollUnderSideDegrees;
-	}
-
-	DefenseSlipPitch = Pitch;
-	DefenseSlipRoll = Roll;
+	DefenseSlipPitch = Pose.Pitch;
+	DefenseSlipRoll = Pose.Roll;
+	DefenseSlipKnee = Pose.KneeDropUU;
 	DefenseSlipStartTime = GetSyncedTimeSeconds();
 	DefenseSlipEndTime = DefenseSlipStartTime + 0.70f;
 }
 
 bool AFBBoxerCharacter::IsHeadEvasionOnTime(float ActiveWindowStart) const
 {
-	const float Now = GetSyncedTimeSeconds();
-	if (DefenseSlipStartTime < 0.f || Now >= DefenseSlipEndTime)
-	{
-		return false;
-	}
-	return DefenseSlipStartTime <= ActiveWindowStart;
+	return FFBHeadMovement::EvasionOnTime(
+		GetSyncedTimeSeconds(),
+		DefenseSlipStartTime,
+		DefenseSlipEndTime,
+		HeadEvasionSince,
+		HeadMoveKind,
+		FVector2D(HeadAxisX, HeadAxisY),
+		HeadMovementLimits.CompletedAxis,
+		ActiveWindowStart);
 }
 
 void AFBBoxerCharacter::AuthoritySlip(FVector2D Axis)
 {
-	if (!HasAuthority() || bKnockedDown || bInClinch || Axis.Size() < 0.2f)
+	if (!HasAuthority() || bKnockedDown || bInClinch || Axis.Size() < 0.22f)
 	{
 		return;
 	}
@@ -3460,6 +3964,9 @@ void AFBBoxerCharacter::EnsureDamageMarkers()
 	TattooMesh = MakeMarker(TEXT("Tattoo"), Cube);
 	BeardMesh = MakeMarker(TEXT("Beard"), Sphere);
 	ScarMesh = MakeMarker(TEXT("Scar"), Cube);
+	LeadWrapMesh = MakeMarker(TEXT("LeadWrap"), Cube);
+	RearWrapMesh = MakeMarker(TEXT("RearWrap"), Cube);
+	SweatMesh = MakeMarker(TEXT("Sweat"), Sphere);
 
 	TintMesh(CheekBruiseMesh, FLinearColor(0.35f, 0.12f, 0.22f));
 	TintMesh(SwollenEyeMesh, FLinearColor(0.62f, 0.28f, 0.34f));
@@ -3493,6 +4000,12 @@ void AFBBoxerCharacter::EnsureDamageMarkers()
 	Seat(BeardMesh, HeadParent, HeadBone, FVector(8.f, 0.f, -6.f), FVector(0.04f));
 	Seat(TattooMesh, RibParent, RibBone, FVector(8.f, -8.f, 8.f), FVector(0.03f, 0.06f, 0.02f));
 	Seat(ScarMesh, HeadParent, HeadBone, FVector(10.f, 0.f, 6.f), FVector(0.012f, 0.03f, 0.006f));
+	const FName LeadBone = bUsingMannequin ? LeadHandSocket() : NAME_None;
+	const FName RearBone = bUsingMannequin ? RearHandSocket() : NAME_None;
+	USceneComponent* HandParent = bUsingMannequin ? HeadParent : static_cast<USceneComponent*>(GetCapsuleComponent());
+	Seat(LeadWrapMesh, HandParent, LeadBone, FVector(4.f, 0.f, 0.f), FVector(0.012f, 0.04f, 0.02f));
+	Seat(RearWrapMesh, HandParent, RearBone, FVector(4.f, 0.f, 0.f), FVector(0.012f, 0.04f, 0.02f));
+	Seat(SweatMesh, HeadParent, HeadBone, FVector(7.f, 0.f, 9.f), FVector(0.02f));
 	if (HairMesh)
 	{
 		HairMesh->SetVisibility(false);
@@ -3514,6 +4027,22 @@ void AFBBoxerCharacter::EnsureDamageMarkers()
 		ScarMesh->SetHiddenInGame(true);
 		TintMesh(ScarMesh, FLinearColor(0.55f, 0.42f, 0.4f));
 	}
+	if (LeadWrapMesh)
+	{
+		LeadWrapMesh->SetVisibility(false);
+		LeadWrapMesh->SetHiddenInGame(true);
+	}
+	if (RearWrapMesh)
+	{
+		RearWrapMesh->SetVisibility(false);
+		RearWrapMesh->SetHiddenInGame(true);
+	}
+	if (SweatMesh)
+	{
+		SweatMesh->SetVisibility(false);
+		SweatMesh->SetHiddenInGame(true);
+		TintMesh(SweatMesh, FLinearColor(0.72f, 0.78f, 0.84f));
+	}
 }
 
 void AFBBoxerCharacter::ApplyVisibleDamage()
@@ -3524,6 +4053,37 @@ void AFBBoxerCharacter::ApplyVisibleDamage()
 	}
 	const float HeadAlpha = (MaxHeadDamage > 1.f) ? FMath::Clamp(HeadDamage / MaxHeadDamage, 0.f, 1.f) : 0.f;
 	const float BodyAlpha = (MaxBodyDamage > 1.f) ? FMath::Clamp(BodyDamage / MaxBodyDamage, 0.f, 1.f) : 0.f;
+	float Sweat = HeadAlpha * 0.35f + BodyAlpha * 0.2f;
+	if (CombatComponent && CombatComponent->MaxBurstEnergy > 1.f)
+	{
+		Sweat += 1.f - FMath::Clamp(CombatComponent->GetBurstEnergy() / CombatComponent->MaxBurstEnergy, 0.f, 1.f);
+	}
+	const FFBDamageLook Damage = FFBBoxerCustomization::DamageFromFight(HeadAlpha, BodyAlpha, CutSeverity, BruiseSeverity, Sweat);
+	const FFBVisualProportions Prop = FFBBoxerCustomization::ProportionsFor(FighterRecord.Look);
+	auto WriteShading = [&](USkinnedMeshComponent* Skel, const FLinearColor& Tint)
+	{
+		if (!Skel)
+		{
+			return;
+		}
+		const int32 NumMats = Skel->GetNumMaterials();
+		for (int32 Index = 0; Index < NumMats; ++Index)
+		{
+			UMaterialInstanceDynamic* MID = Skel->CreateAndSetMaterialInstanceDynamic(Index);
+			if (!MID)
+			{
+				continue;
+			}
+			MID->SetVectorParameterValue(TEXT("Tint"), Tint);
+			MID->SetVectorParameterValue(TEXT("Paint Color"), Tint);
+			MID->SetScalarParameterValue(TEXT("Roughness"), Damage.Roughness);
+			MID->SetScalarParameterValue(TEXT("Subsurface"), Damage.Subsurface);
+			MID->SetScalarParameterValue(TEXT("Sweat"), Damage.Sweat);
+			MID->SetScalarParameterValue(TEXT("Bruise"), Damage.Bruise);
+			MID->SetScalarParameterValue(TEXT("Cut"), Damage.Cut);
+			MID->SetScalarParameterValue(TEXT("Blood"), Damage.Blood);
+		}
+	};
 
 	auto Show = [](UStaticMeshComponent* Comp, bool bShow, const FVector& Scale)
 	{
@@ -3546,17 +4106,41 @@ void AFBBoxerCharacter::ApplyVisibleDamage()
 	Show(RibBruiseMesh, BodyAlpha > 0.2f, FVector(0.07f + BodyAlpha * 0.08f, 0.09f + BodyAlpha * 0.06f, 0.04f + BodyAlpha * 0.04f));
 
 	const FLinearColor Bruised(0.48f, 0.24f, 0.28f);
-	TintMesh(HeadMesh, FMath::Lerp(BaseSkin, Bruised, HeadAlpha));
-	TintMesh(BodyMesh, FMath::Lerp(BaseSkin, FLinearColor(0.52f, 0.28f, 0.26f), BodyAlpha * 0.85f));
+	const FLinearColor HeadTint = FMath::Lerp(BaseSkin, Bruised, Damage.Bruise * 0.65f);
+	const FLinearColor BodyTint = FMath::Lerp(BaseSkin, FLinearColor(0.52f, 0.28f, 0.26f), Damage.BodyBruise * 0.85f);
+	TintMesh(HeadMesh, HeadTint);
+	TintMesh(BodyMesh, BodyTint);
+	WriteShading(GetMesh(), HeadTint);
+	WriteShading(PoseMesh, HeadTint);
 	if (BrowCutMesh)
 	{
-		const float BrowShift = (FighterRecord.Look.Brow - 0.5f) * 4.f;
-		const float JawShift = (FighterRecord.Look.Jaw - 0.5f) * 3.f;
-		BrowCutMesh->SetRelativeLocation(FVector(10.f, 3.f + JawShift, 8.f + BrowShift));
+		BrowCutMesh->SetRelativeLocation(FVector(10.f, 3.f + Prop.JawOffset, 8.f + Prop.BrowOffset));
 	}
 	if (BloodyNoseMesh)
 	{
-		const float NoseShift = (FighterRecord.Look.Nose - 0.5f) * 3.f;
-		BloodyNoseMesh->SetRelativeLocation(FVector(12.f + NoseShift, 0.f, -1.f));
+		BloodyNoseMesh->SetRelativeLocation(FVector(12.f + Prop.NoseOffset, Prop.Asymmetry * 0.15f, -1.f));
+	}
+	if (CheekBruiseMesh)
+	{
+		CheekBruiseMesh->SetRelativeLocation(FVector(10.f, -5.f + Prop.CheekOffset + Prop.Asymmetry, 2.f));
+	}
+	if (SwollenEyeMesh)
+	{
+		SwollenEyeMesh->SetRelativeLocation(FVector(9.f, 4.5f + Prop.Asymmetry * 0.5f, 5.f + Prop.EyeOffset));
+		if (Damage.Swelling > 0.22f)
+		{
+			SwollenEyeMesh->SetRelativeScale3D(FVector(0.045f + Damage.Swelling * 0.07f, 0.035f + Damage.Swelling * 0.03f, 0.03f + Damage.Swelling * 0.08f));
+		}
+	}
+	if (SweatMesh)
+	{
+		const bool bShowSweat = Damage.Sweat > 0.35f;
+		SweatMesh->SetVisibility(bShowSweat);
+		SweatMesh->SetHiddenInGame(!bShowSweat);
+		if (bShowSweat)
+		{
+			const float Drop = 0.018f + Damage.Sweat * 0.02f;
+			SweatMesh->SetRelativeScale3D(FVector(Drop));
+		}
 	}
 }

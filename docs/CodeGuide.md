@@ -122,7 +122,7 @@ Runs on the server. Clients see the replicated phase and play the pose.
 | --- | --- |
 | `UFBCombatComponent` | Turns the component tick on and marks it replicated. |
 | `GetLifetimeReplicatedProps` | Copies energy, guard, the active punch, and the last impact to clients. |
-| `TickComponent` | On the server, advances startup, the hit window, and recovery, and refills energy while idle. Body damage slows that refill. While the hit window is open it keeps asking `ResolveAgainstOpponent` until the glove connects or the window ends. |
+| `TickComponent` | On the server, advances startup, the hit window, and recovery, and refills energy. A trickle runs during a punch. The pause bonus is slower behind a guard. Body damage slows that refill. While the hit window is open it keeps asking `ResolveAgainstOpponent` until the glove connects or the window ends. |
 | `ServerTryProcessIntent` | Accepts a punch only when idle and there is enough energy. Ignores old or wrong-version requests. |
 | `GetBurstEnergy` | Current punch energy. |
 | `GetFatigue` | Energy that does not come back as fast. |
@@ -134,7 +134,7 @@ Runs on the server. Clients see the replicated phase and play the pose.
 | `IsPowerShot` | This punch uses the power multiplier. |
 | `OnRep_CombatVisual` | Client redraws the pose when the phase changes. |
 | `OnRep_LastImpact` | Client plays the defender's flinch. |
-| `CanAfford` | True if energy covers this punch. |
+| `CanAfford` | True if energy covers this punch. A low tank can still jab. Power and heavier shots wait. |
 | `CostFor` | Energy spent by each punch. |
 | `DamageFor` | Base damage of each punch, before power, body, block, and angle. |
 | `SetPhase` | Switches phase and tells the boxer to redraw. |
@@ -234,17 +234,17 @@ Ringside camera just above the ropes. It looks slightly down at both fighters so
 | `GetOrbitYaw` | Current side of the ring. |
 | `GetOrbitFlatRotation` | That yaw with no pitch. |
 | `AutoFindFighters` | Uses the local pawn and the other boxer if `SetFighters` has not run. |
-| `ComputeFrame` | Places the camera outside the ropes and aims at the fighters' hips. Two live boxers scale that ringside offset. One fighter, or the heavy bag, does not. |
+| `ComputeFrame` | Places the camera outside the ropes and aims at the fighters' hips. Two live boxers scale that ringside offset. Heavy-bag training frames the whole fighter from the side and rear. |
 | `SnapToFrame` | Jumps there immediately so the first frame is the wide ringside shot. |
 
-The zoom reads the center-to-center gap of the two live boxers. **110 cm** is the clinch (the close dolly). **760 cm** is the far end, the diagonal of the ±270 cm playable box. On a flat side at 16:9 and 62°, the close dolly is about **5.1 m** from ring center and the far dolly is the existing wide offset, about **8.9 m**. The lens stays at least 120 cm outside the 305 cm rope line and inside ±1300 cm so it does not enter the ring or sit in the gym wall. The gap eases at interp speed 2.8 (about 0.35 s), then the camera eases to that spot. Fight FOV stays **62°**. It may tighten to **58°** when the ropes block a closer dolly, or open to **68°** when a wall blocks a wider one. The referee cut stays **42°** and does not take this zoom. Heavy-bag training still frames the fighter and the active bag.
+The zoom reads the center-to-center gap of the two live boxers. **110 cm** is the clinch (the close dolly). **760 cm** is the far end, the diagonal of the ±270 cm playable box. On a flat side at 16:9 and 62°, the close dolly is about **5.1 m** from ring center and the far dolly is the existing wide offset, about **8.9 m**. The lens stays at least 120 cm outside the 305 cm rope line and inside ±1300 cm so it does not enter the ring or sit in the gym wall. The gap eases at interp speed 2.8 (about 0.35 s), then the camera eases to that spot. Fight FOV stays **62°**. It may tighten to **58°** when the ropes block a closer dolly, or open to **68°** when a wall blocks a wider one. The referee cut stays **42°** and does not take this zoom. Heavy-bag training frames one fighter and one bag from the side and rear, aimed at the chest, and widens the lens only if a wall would crop the shoes or the head.
 
 ## Ring — `Ring/FBP1ArenaBootstrap.h` and `Ring/FBRingBounds.h`
 
 | Function | What it does |
 | --- | --- |
 | `EnsureArena` | Builds the canvas, ropes, lights, and bounds if they are missing. Spawns the opponent only when asked. The last argument dresses the room as an old-school gym for 1v1 AI. |
-| `EnsureBagRoom` | Heavy bag training only. A bag row on the north wall, on the same walk surface as the gym (Z=-90). Floor, walls, ceiling, a beam into the side walls, a short hall, and movable lights. One punching bag and visual neighbors. Does not move the bout ring. |
+| `EnsureBagRoom` | Heavy bag training only. One bag on the north wall, on the same walk surface as the gym (Z=-90). Floor, walls, ceiling, a beam into the side walls, a short hall, and movable lights. Does not move the bout ring. |
 | `DestroyBagRoom` | Removes that shell and its lights when training ends. |
 | `SpawnFloor` | Canvas, apron, posts, and four ropes. Around that, either the dark bowl or the gym. |
 | `SpawnOldSchoolGym` | Wood floor, brick walls, ceiling, beams, windows, bags, bench, bucket, mirror, and posters. Basic shapes. Outside the ropes. |
@@ -261,14 +261,15 @@ The zoom reads the center-to-center gap of the two live boxers. **110 cm** is th
 
 | Function | What it does |
 | --- | --- |
-| `AFBHeavyBag` | A leather cylinder 46 cm across and 132 cm tall, with end caps and bands, on a 34 cm chain. Neighbors use the same shape and do not simulate. |
+| `AFBHeavyBag` | A leather cylinder 46 cm across and 132 cm tall, with end caps and bands, on a 34 cm chain. Training hangs one of these. |
 | `BeginPlay` | Loads the engine cylinder and forces that scale. The active bag is a 40 kg body hung from the top. Swing and twist are limited. An angular drive returns it. It overlaps the pawn, so it does not push the capsule. |
 | `Tick` | Lays the chain from the beam to the top of the bag. Restores the leather scale if physics collapses it. |
 | `ApplyStrike` | Server only. Adds an impulse at the punch contact so the bag swings and twists. It does not resize punch spheres. |
+| `SeatGloveCenter` | Pulls a glove point that has entered the leather back to the surface. The punch sphere is not moved. |
 | `OverlapsPunch` | True when the existing punch sphere overlaps the leather. |
 | `GetStrikeCenter` | The bag mesh's current location. |
 
-Open the drill from the front-end **Heavy Bag Training** row, or from the sparring mode menu of the same name, or with console `FBMode 3`. That is `EFBPlayMode::Training`. It does not start the 3:00 clock or knockdowns. The fighter stands on the bag-room floor, 175 cm south of the center bag, facing it. The bout ring stays at the origin.
+Open the drill from the front-end **Heavy Bag Training** row, or from the sparring mode menu of the same name, or with console `FBMode 3`. That is `EFBPlayMode::Training`. It does not start the 3:00 clock or knockdowns. The fighter stands on the bag-room floor, 175 cm south of the bag, facing it. The bout ring stays at the origin.
 
 ## Fight meters — `UI/FBFightMeters.h`
 
@@ -294,8 +295,8 @@ Reading notes: `docs/BoutAndScorecard.md`. The server decides the count and the 
 | --- | --- |
 | `AFBSparringGameState` | The copy of the clock, the count, the two target angles, the downed fighter, and the card that every screen can read. The game mode itself does not replicate. |
 | `PushBoutState` | Writes those fields from the server mode. Training leaves the clock stopped. |
-| `StartBout` | Starts one 3:00 round and clears the ledgers and the card. |
-| `Tick` | Runs the 3:00, or the count of 10 while someone is down. The bout clock waits during the count. |
+| `StartBout` | Starts round 1 of three 3:00 rounds and clears the ledgers and the card. |
+| `Tick` | Runs the 3:00, the 1:00 rest, or the count of 10 while someone is down. The round clock waits during the count. |
 | `NotifyEnergyDepleted` | Starts a knockdown when a live fighter spends the gas tank to empty. Ignored in training, before the bell, and after the bout. |
 | `BeginKnockdown` | Puts that fighter on the canvas, starts the count at 10, and cuts the camera to the referee. |
 | `SubmitGetUpAim` | Scores both sticks against the rotating marks. A short hold on both marks beats the count. |
@@ -303,7 +304,7 @@ Reading notes: `docs/BoutAndScorecard.md`. The server decides the count and the 
 | `FinishKnockout` | Names the other fighter the winner when the count expires. |
 | `NoteImpact` | Adds punch credit to the attacker's corner. A clean shot is 1. A block is 0.25. Head and body damage are still recorded and are not judge points. |
 | `TickRingGeneralship` | Each second of the 3:00, scores who is at the range their style wants, who forced the other fighter off that range, and who is closer to the center. |
-| `BuildDecisionCard` | Three judges, 10-point must, only if both fighters are still in at the bell. Harris leans on punch count. Cole leans on ring generalship. Reed leans on knockdowns. The card shows those three pillars. |
+| `BuildDecisionCard` | Names the winner from the three judges' summed 10-point rounds. Harris leans on punch count. Cole leans on ring generalship. Reed leans on knockdowns. Each bell adds one round before this runs. |
 | `AFBBoxerAIController` | Chooses the opponent's next step and the next `FFBCombatIntent`. The goal is to win under the rules: land clean, avoid damage, keep enough energy to stay up, and do not punch a downed fighter. |
 | `BuildKnockoutCard` | A knockout card. It does not invent round scores. |
 | `ShowReferee` / `HideReferee` | A referee built from basic shapes, with no collision, tagged `FB_Referee`. |
@@ -376,7 +377,9 @@ Reading notes: `docs/FighterBalance.md`. Decision D-016.
 
 The screen is the 1v1 Slate builder. Every field below is stored on `FFBPresentation` inside the `FBFighterRoster` save. The live fighter stays the mannequin. Height, chest, waist, and the other body numbers do not change the capsule or the punch spheres.
 
-In the fight you can see: skin tint from skin U/V, hair and beard proxies, gray hair, tattoo placement and density, a scar mark, glove color, and glove size from muscularity. The pawn turns slowly while the builder is open.
+Create a Fighter opens a hole on the left of that screen. The ringside camera orbits the pawn there. Drag rotates it, the wheel zooms it, and it turns on its own unless reduced motion is on. Body and face rows are sliders. A slider paints the pawn immediately. Save still writes the 600-point fighter, including the look, into `FBFighterRoster`. Reset look clears the sliders and leaves the ratings. Randomize fills a seeded look and can flip stance. Age is 18 to 45. Height and reach labels stay inside lightweight, middleweight, or heavyweight. `FFBBoxerCustomization` is look version 1.
+
+In the fight you can see: skin tint from skin U/V, hair and beard proxies, gray hair, tattoo placement and density, a scar mark, glove color, glove size, and a hand-wrap band when a wrap style is set. The builder camera orbits the pawn. Drag and the wheel move that view. Body sliders change bone thickness a little and keep the punch pose on the same hand targets.
 
 Editor only, because this install builds a MetaHuman through `UMetaHumanCharacterEditorSubsystem` plus an Epic texture and rig download: the MetaHuman mesh itself, face-model coefficients, body-constraint solve, iris texture, eyelash groom, teeth mesh, makeup materials, and clothing wardrobe items. The saved numbers are the ones to type into that editor later. No age or wrinkle slider exists on this plugin. Skin tone is the skin map U and V. Freckles are None, Type 1, Type 2, Type 3.
 
@@ -384,9 +387,9 @@ The 2026-10-19 15:17 startup log does not ask the project for a MetaHuman asset.
 
 | Page | Controls the player sets |
 | --- | --- |
-| Identity | Nickname, division, stance, country, masculine/feminine, glove, trunks, stripe, shoes, hand wraps |
-| Body | Height, muscularity, fat, masculine/feminine, chest, waist, hip, bicep, thigh |
-| Face | Brow, eyes, nose, cheeks, jaw, chin, lips, ears, asymmetry. These move marks on the mannequin. MetaHuman sculpts the same regions with landmarks, not these named sliders. |
+| Identity | Name, nickname, hometown, age, division, stance, country, masculine/feminine, glove, trunks, stripe, shoes, hand wraps, and the glove, trunks, shoe, wrap, and accessory styles |
+| Body | Sliders for height, reach, shoulders, chest, torso, arms, legs, muscle, fat, neck, waist, hip, bicep, and thigh. A row still steps the same value from the pad |
+| Face | Sliders for head width, head length, brow, eyes, nose, cheeks, jaw, chin, lips, ears, and asymmetry. These move marks on the mannequin. MetaHuman sculpts the same regions with landmarks, not these named sliders |
 | Skin | Skin U, skin V, freckle mask, freckle density, iris 1–9, iris hue, foundation, blush, lip makeup, tooth length |
 | Hair | Bald/crop/short/fade/braids, gray, beard, mustache, eyelash type, tattoo place and density, scar, groom slot (Hair, Eyebrows, Beard, Mustache, Eyelashes, Peachfuzz) |
 | Ratings | The 19 CompetitiveFair ratings, next-point cost, and the Balanced, Puncher, Counter, and Pressure presets |
@@ -404,7 +407,7 @@ The photo is `Content/UI/FB_MenuArena.jpg`. Its left side is flat black, so the 
 | `1V1 SPARRING (AI)` | Travels to the ring. The arena photo stays, and the fighter list slides in over it. Create a Fighter stays on that screen. Fight still waits for two legal 600-point builds in one class. |
 | `1V1 MULTIPLAYER` | Travels and applies multiplayer. It does not open fighter select. |
 | `HEAVY BAG TRAINING` | `EFBPlayMode::Training` against `AFBHeavyBag`. It does not start the 3:00 clock. |
-| `1V1 CAREER` | One 3:00 bout, same server rules as sparring. The fighter list always opens. The player picks their fighter and a premade in that class group. The card writes wins, losses, draws, and +25 Career XP on that created fighter in `FBFighterRoster`. |
+| `1V1 CAREER` | Three 3:00 rounds, same server rules as sparring. The fighter list always opens. The player picks their fighter and a premade in that class group. The card writes wins, losses, draws, and +25 Career XP on that created fighter in `FBFighterRoster`. |
 | `SETTINGS` | Volume, display, and reduced motion. Front-end only. Not a game mode. |
 | `CREDITS` | Project title, studio, and copyright. Front-end only. Not a game mode. |
 | `QUIT GAME` | Asks, then closes the game. Front-end only. Not a game mode. |

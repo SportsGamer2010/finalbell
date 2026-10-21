@@ -236,6 +236,62 @@ struct FFBPresentation
 	/** Groom slot from the plugin wardrobe: Hair, Eyebrows, Beard, Mustache, Eyelashes, Peachfuzz. */
 	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
 	FString GroomSlot = TEXT("Hair");
+
+	/** Create-a-Boxer profile. 1 is the current look. Older saves load as 1 with the new sliders at rest. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 LookVersion = 1;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	FString Hometown;
+
+	/** 18 to 45. Presentation only. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 Age = 28;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float HeadWidth = 0.5f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float HeadLength = 0.5f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float ShoulderWidth = 0.5f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float TorsoLength = 0.5f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float ArmLength = 0.5f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float LegLength = 0.5f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float Neck = 0.5f;
+
+	/** Class measurement, 0 to 1 inside the weight-class band. It does not move the punch spheres. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	float Reach = 0.5f;
+
+	/** 0 training, 1 fight, 2 lace-up. One glove mesh. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 GloveStyle = 1;
+
+	/** 0 classic, 1 short, 2 long. The mannequin has no separate trunks mesh. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 TrunksStyle = 0;
+
+	/** 0 high-top, 1 low. The mannequin has no boxing shoes. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 ShoeStyle = 0;
+
+	/** 0 none, 1 both hands, 2 Mexican. Shown as a no-collision band on the hand bone. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 WrapStyle = 0;
+
+	/** 0 none, 1 mouthguard, 2 tape, 3 waistband. Stored until those meshes exist. */
+	UPROPERTY(BlueprintReadOnly, Category = "FinalBell|Fighter")
+	int32 Accessory = 0;
 };
 
 USTRUCT(BlueprintType)
@@ -342,7 +398,7 @@ public:
 	static constexpr int32 RetrainCap = 20;
 	static constexpr int32 MaxCreated = 10;
 	static constexpr int32 RulesetVersion = 1;
-	static constexpr float RegenDelaySeconds = 0.6f;
+	static constexpr float RegenDelaySeconds = 0.35f;
 	static constexpr float BlockDelaySeconds = 0.8f;
 	static constexpr float ExposureCap = 1.60f;
 

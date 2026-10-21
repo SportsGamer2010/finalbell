@@ -8,6 +8,7 @@
 #include "GameFramework/Character.h"
 #include "Combat/FBCombatTypes.h"
 #include "Combat/FBFighterBalance.h"
+#include "Combat/FBHeadMovement.h"
 #include "FBBoxerCharacter.generated.h"
 
 class ULocalPlayer;
@@ -61,6 +62,19 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Combat")
 	float ApplyAuthoritativeDamage(float Amount, int32 AttackInstanceId, EFBHitRegion Region, bool bCountAsClean = true);
+
+	/** Share of chin damage still there after the minute between rounds. */
+	static constexpr float RestHeadKept = 0.68f;
+
+	/** Share of rib damage still there after the minute between rounds. The wind comes back a little more than the chin. */
+	static constexpr float RestBodyKept = 0.58f;
+
+	/**
+	 * Why: a minute in the corner gives some of the chin and the body back. It does not make a hurt fighter fresh.
+	 * What: on the server, keeps 68% of head damage and 58% of body damage, clears stun, and refills the guard.
+	 * The capsule and the punch spheres stay the same size.
+	 */
+	void RestoreForNextRound();
 
 	/** Head plus body. Kept so older call sites still have one combined total. */
 	UFUNCTION(BlueprintPure, Category = "FinalBell|Combat")
@@ -226,6 +240,16 @@ public:
 	 * A pose that finished early, or one that started after the window opened, is not a defense.
 	 */
 	bool IsHeadEvasionOnTime(float ActiveWindowStart) const;
+
+	float GetShownDefensePitch() const { return ShownDefensePitch; }
+	float GetShownDefenseRoll() const { return ShownDefenseRoll; }
+	float GetShownKneeDrop() const { return ShownKneeDrop; }
+	float GetSmoothedMoveForward() const { return SmoothedMoveForward; }
+	float GetSmoothedMoveRight() const { return SmoothedMoveRight; }
+	float GetPunchPoseAlpha() const { return PunchPoseAlpha; }
+	EFBAttackId GetDisplayAttack() const { return DisplayAttack; }
+	FVector2D GetReplicatedHeadAxes() const { return FVector2D(HeadAxisX, HeadAxisY); }
+	bool IsAnimBlueprintBody() const { return bAnimBlueprintBody; }
 
 	/** Server clock. Locks and defense windows use this so every machine agrees. */
 	float GetSyncedTimeSeconds() const;
@@ -412,6 +436,17 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UStaticMeshComponent> ScarMesh;
 
+	/** No-collision hand bands. The mannequin has no wrap mesh. */
+	UPROPERTY()
+	TObjectPtr<UStaticMeshComponent> LeadWrapMesh;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMeshComponent> RearWrapMesh;
+
+	/** Placeholder sweat highlight. A skin material should read the Sweat parameter instead. */
+	UPROPERTY()
+	TObjectPtr<UStaticMeshComponent> SweatMesh;
+
 	FFBCombatDerived CombatDerived;
 	bool bHasCompetitiveBuild = false;
 	float BlockRegenDelay = 0.f;
@@ -426,8 +461,19 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Skin")
 	TObjectPtr<USkeletalMesh> QuinnMesh;
 
+	/**
+	 * Generic mannequin locomotion. It is not assigned to the visible body.
+	 * A reference here does not mean an AnimBP is playing.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Skin")
 	TSubclassOf<UAnimInstance> UnarmedAnimClass;
+
+	/**
+	 * Boxing AnimBP parented to UFBBoxerAnimInstance. Null keeps PoseMesh.
+	 * ABP_Unarmed is not a stand-in for this.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Animation")
+	TSubclassOf<UAnimInstance> BoxingAnimClass;
 
 	/** Head plus body. Updated only on the server, then copied to clients. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
@@ -488,6 +534,8 @@ protected:
 
 	int32 LocalIntentSequence = 0;
 	bool bUsingMannequin = false;
+	/** True only when BoxingAnimClass is driving GetMesh(). PoseMesh is hidden on that path. */
+	bool bAnimBlueprintBody = false;
 	/** Reference pose locals for the mesh currently on PoseMesh. */
 	TArray<FTransform> SkinnedRefLocals;
 	bool bBodyModifierHeld = false;
@@ -538,8 +586,35 @@ protected:
 	UPROPERTY(Replicated)
 	float DefenseSlipEndTime = -1.f;
 
+	UPROPERTY(Replicated)
+	float DefenseSlipKnee = 0.f;
+
 	/** Server clock when the slip, roll, or lean pose began. Not a damage value. */
 	float DefenseSlipStartTime = -1.f;
+
+	/**
+	 * Planted head movement. Axes are continuous and signed. Kind is the
+	 * server classification. This is not a bone transform.
+	 */
+	UPROPERTY(Replicated)
+	float HeadAxisX = 0.f;
+
+	UPROPERTY(Replicated)
+	float HeadAxisY = 0.f;
+
+	UPROPERTY(Replicated)
+	EFBHeadMoveKind HeadMoveKind = EFBHeadMoveKind::Inactive;
+
+	/** Server clock when the current completed slip, lean, or roll began. -1 when it is not evasion. */
+	UPROPERTY(Replicated)
+	float HeadEvasionSince = -1.f;
+
+	/** Roll-under exit. +1 stick right, -1 stick left. */
+	UPROPERTY(Replicated)
+	float RollUnderSign = 0.f;
+
+	UPROPERTY(EditAnywhere, Category = "FinalBell|Defense")
+	FFBHeadMovementLimits HeadMovementLimits;
 
 	float FacingYawOffsetTarget = 0.f;
 
@@ -572,6 +647,15 @@ protected:
 	/** Eased defense bend. Presentation only. The capsule does not follow it. */
 	float ShownDefensePitch = 0.f;
 	float ShownDefenseRoll = 0.f;
+	float ShownKneeDrop = 0.f;
+	EFBHeadMoveKind LocalHeadKind = EFBHeadMoveKind::Inactive;
+	float LocalRollUnderSign = 0.f;
+	float LocalRollUnderUntil = -1.f;
+	TArray<FFBHeadStickSample> HeadStickHistory;
+	FVector2D LastSentHeadAxis = FVector2D::ZeroVector;
+	float LastSentHeadTime = -1.f;
+	bool bLastSentHeadActive = false;
+	float DefenseDebugAccum = 0.f;
 
 	UPROPERTY(Replicated)
 	float FacingLockYaw = 0.f;
@@ -745,13 +829,25 @@ protected:
 	void PushSmoothedMove();
 	/** Capsule yaw this frame becomes hip lag. The chest share cancels it, so the shoulders stay on the capsule. */
 	void UpdateMovementYawLag(float DeltaSeconds);
-	/** Eases the slip, roll, and lean. Weave reads the stick or the velocity. */
+	/** Eases the planted head movement, and an explicit slip while that window is up. */
 	void UpdateDefensePose(float DeltaSeconds);
+	void NoteHeadStick(FVector2D Axis, bool bActive);
+	void AuthorityApplyHeadMovement(FVector2D Axis, bool bActive);
+	void ApplyHeadSample(FVector2D Axis, bool bActive, EFBHeadMoveKind& OutKind, FVector2D& OutAxis, float& OutSign);
+	bool IsWeaveKeyDown() const;
+	bool IsBlockKeyDown() const;
+	void ForceReleaseDefenseInputs();
+	void LogDefenseState(const TCHAR* Event) const;
+	float DefensePoseWeight() const;
+	bool TryActivateAnimBlueprintBody();
 	void ConfigureBodyCollision();
 	void EnsureRuntimeInput();
 
 	UFUNCTION(Server, Unreliable)
 	void ServerSetFacingOffset(float OffsetDegrees);
+
+	UFUNCTION(Server, Unreliable)
+	void ServerSetHeadMovement(FVector2D Axis, bool bActive);
 
 	UFUNCTION()
 	void OnRep_AngleBonus();
@@ -775,6 +871,14 @@ protected:
 	void ApplyShapePose();
 	/** Writes the guard, the step, and the active punch onto the mannequin skeleton. */
 	void ApplySkinnedPose(float DeltaSeconds);
+
+	/**
+	 * Why: the punch pose aims at a fixed point past the shoulder. Once the fighter
+	 * steps into the bag, that point is inside the leather, and the bag does not block the pawn.
+	 * What: moves the striking hand back to the leather surface. The punch sphere stays put.
+	 * GlovePadCm is how far the visible glove sits past the hand point.
+	 */
+	FVector SeatPunchHandOnBag(const FVector& HandLocal, float GlovePadCm) const;
 
 	/**
 	 * Why: the mannequin and the cylinder fallback must coil by the same amount,

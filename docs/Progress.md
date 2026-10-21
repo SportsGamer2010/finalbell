@@ -1,5 +1,25 @@
 # Final Bell — Progress Log
 
+## 2026-10-21 — Create-a-Boxer prototype
+
+The create screen now has a 3D preview. While Create a Fighter is open, the left side of the screen is clear and the ringside camera orbits that pawn. Drag rotates, the wheel zooms, and Zoom in / Zoom out are on the pad list. Body and face controls are sliders and update the pawn without rebuilding the menu. Save and load still use `FBFighterRoster` (ten created fighters). Reset look and Randomize are on that screen.
+
+Look profile version is 1. New fields are hometown, age, head size, shoulders, torso, arms, legs, neck, reach, and equipment style. Old saves load those at rest. Bone length stays within 3 percent. Bulk stays near 12 percent. The capsule and the punch spheres are unchanged. Two boxers still each apply their own `FFBFighterRecord`.
+
+What is already in the project: `AFBBoxerCharacter`, `UFBCombatComponent`, `SKM_Manny_Simple` / `SKM_Quinn_Simple` on `SK_Mannequin`, the poseable punch pose, glove spheres, and the engine cube/sphere markers for hair, beard, scar, tattoo, bruise, cut, and sweat. MetaHuman plugins are enabled. There is no MetaHuman mesh in the game, and Creator is not an in-game editor.
+
+Art that still has to be made elsewhere: a head with morph targets, modular gloves, trunks, shoes, and tattoos, a skin material with Roughness, Subsurface, Sweat, Bruise, Cut, and Blood parameters, and a boxing AnimBP. The mannequin material ignores those parameters today. Bruises and cuts stay on the marker meshes. Mouthguard, shoe style, and trunks style are saved and do not have their own meshes. The mannequin body is one material, so trunks color shows on the slate card and on the primitive fallback, not as a separate skinned region.
+
+Play in the editor was not run. `Build.bat FinalBellEditor Win64 Development` finished in this session with `Result: Succeeded` (about 75s). `UnrealEditor-Cmd` reached `Ready to start automation` for `FinalBell.Creator.Profile` and did not print a pass or fail. That process was stopped.
+
+## 2026-10-21 — three-round bout and stamina that lasts a round
+
+Sparring, multiplayer, and career are three rounds of 3:00 with a 1:00 rest. At the bell the server gives back some head and body damage, clears stun, refills the guard, cuts fatigue, and lifts the gas tank to about 82% of the new ceiling. Judges score each round and add the 10-point scores. A count of ten is still a knockout and does not invent those rows.
+
+Stamina was emptying in round 1 because regen required the hands down. A held guard now refills slower than an open guard, a trickle continues during a punch, and a jab still throws once a small amount of energy is left. Heavier shots and power shots wait until they fit. Spending the tank to empty still starts the count. Training still has no clock and no knockdowns.
+
+Play in the editor was not run. `Build.bat FinalBellEditor Win64 Development` finished in this session with `Result: Succeeded` (about 93s). The guard-regen and between-round tank checks are in `FBTacticalTests.cpp` (`FinalBell.AI.GuardRelease`). That automation test was not launched.
+
 ## 2026-10-17 — P0 audit + first P1 source increment
 
 ### Audit evidence
@@ -428,6 +448,29 @@ FB-ENH-01 through FB-ENH-06 were not part of this pass and are not verified. The
 - `python Tools/AI/scripts/check_fighter_balance.py` exited 0: CompetitiveFair, 19 ratings, budget 600, 16 styled division fighters.
 - Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (8.58 s) and linked `UnrealEditor-FinalBell.dll`. Live Coding did not block it. An earlier pass failed on compile errors in the new controller and was fixed before this link.
 - Automation: `UnrealEditor-Cmd` `-ExecCmds="Automation RunTests FinalBell.AI"` `-NullRHI` reported **6 tests performed**, all Success: FootworkIntensity, Hysteresis, Cues, GuardRelease, ExchangeAndCleanup, Difficulty. Exit status 0. These tests use a fixed seed and explicit time. They are not a claim of physics determinism.
+
+### 2026-10-20 — Planted head movement, PoseMesh stays
+
+Holding L2 no longer sets the guard to Weave and no longer ducks on a centered stick. L2 eats the left stick for planted head movement. A centered stick is a 6° trunk tuck. Left and right grade a slip up to 22°. Back leans up to 16°. Forward drops the pelvis up to 12 cm. A roll under runs only after the stick travels from one side, through forward, to the other. R2 still picks high or low. Low guard is R2 plus stick down while L2 is up. R2 and L2 together keep that guard and still move the head. Releasing L2 eases back to the guard. Holding L2 does not miss a hook. A completed slip, lean, or roll has to pass 0.55 on that axis, or be a real arc, and it has to have started before the punch. The server stores the signed axes and that start time. A remote fighter reads those axes, so a stationary lean is the same direction as the owner. L3 and the shoulder taps still use the shared slip path. The AI slip is that same path. There was no separate AI shortcut to remove.
+
+`fb.DebugDefense 1` logs the trigger axes, Left Ctrl, Left Shift, both holds, the guard, the stick, and the pose. It is not the fight HUD. The analog L2/R2 keys and the digital fallback both stay. They set one hold. The editor foreground-window gate was not put back.
+
+The visible body is still PoseMesh. `BoxingAnimClass` is null, so `UFBBoxerAnimInstance` is not driving a mesh. `ABP_Unarmed` is still only a reference. PIE was not run. The AnimBP path was not seen in play.
+
+Missing boxing clips, all of them, on skeleton `/Game/Mannequins/Meshes/SK_Mannequin`: guarded idle, forward/back/left/right in-place shuffles, left and right slips, lean back, duck, left and right rolls, jab and cross with recoveries, and pivots. The unarmed walk, jog, idle, and attack montages are not that library. `CR_Mannequin_FootIK` is on disk and is not driving the fighter. Editor steps are in `docs/Controls_UndisputedCompetitor.md`. Decision D-031.
+
+- `python Tools/AI/scripts/check_fighter_balance.py` exited 0. Ratings were not changed. CompetitiveFair, 19 ratings, budget 600, 16 styled division fighters.
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Succeeded** (39.99 s) and linked `UnrealEditor-FinalBell.dll`. The editor was not running. Live Coding did not block it.
+- Automation: `UnrealEditor-Cmd` `-ExecCmds="Automation RunTests FinalBell"` `-NullRHI` reported **11 tests performed**, all Success. The six AI tests above, plus NeutralIsNotADuck, SignedAxes, ReleaseResets, GuardPlusLean, and LegalStateAndPresentation. Exit status 0.
+- PIE was not run. The pad was not watched.
+
+### 2026-10-21 — One bag, full-body camera, glove on the leather
+
+Heavy bag training was hanging five bags. The center one took punches. The other four were visual. The lens sat 300 cm to the side and 290 cm back from the midpoint between the fighter and the bag, aimed at 115 cm, so the shoes or the head left the frame when the fighter stepped. The punch pose still reaches a fixed point past the shoulder. The bag overlaps the pawn, so nothing stopped that point once the fighter stepped into range, and the glove finished inside the cylinder.
+
+Training now hangs one bag on the same beam. Entering the drill destroys any neighbor bags left from an older session. The camera stands 460 cm to the side and 420 cm behind the fighter and aims at the chest. It stays inside the room and widens from 62° up to 74° only if a wall would crop the shoes or the head. The striking hand is pulled back to the leather surface. That is presentation. The punch sphere is the same size. The capsule is kept 8 cm outside the leather so a step cannot walk the body through the bag. Sparring, career, the bout ring, and the gym's decorative bags were not changed. Training still has no 3:00 clock and no knockdowns. Decision D-032.
+
+- Build: `Build.bat FinalBellEditor Win64 Development -Project FinalBell.uproject -WaitMutex` **Result: Failed (OtherCompilationError)** (26.44 s). UHT finished. Unreal then refused the compile because Live Coding is active. The editor was not closed. PIE was not run. Press Ctrl+Alt+F11 in the editor to compile, then start Heavy Bag Training again so the extra bags are removed.
 
 
 

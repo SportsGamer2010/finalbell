@@ -366,15 +366,30 @@ void AFBBroadcastCamera::ComputeFrame(FVector& OutLocation, FVector& OutLookAt, 
 
 	if (TrainingBag)
 	{
-		// Three-quarter view: off the bag row, behind the fighter, inside the room.
-		// One fighter and a bag. The separation zoom does not run.
+		// Side-rear view of one fighter and one bag. The look point is the chest,
+		// so the head and the shoes stay in the shot when the fighter steps.
 		const FFBBagRoomLayout Room = UFBP1ArenaBootstrap::GetBagRoomLayout();
+		const float BodyHeight = PlayerHalf * 2.f;
+		const FVector Chest = PlayerFeet + FVector(0.f, 0.f, PlayerHalf);
 		const FVector Back = -Line;
-		OutLocation = Mid + Side * Room.CameraSide + Back * Room.CameraBack;
-		OutLocation.Z = FeetZ + Room.CameraHeight + FMath::Max(0.f, OrbitPitch) * 3.f;
-		OutLocation.X = FMath::Clamp(OutLocation.X, -Room.InnerHalfX + 80.f, Room.InnerHalfX - 80.f);
-		OutLocation.Y = FMath::Clamp(OutLocation.Y, Room.SouthInnerY + 80.f, Room.BagY - 120.f);
-		OutLookAt = FVector(Mid.X, Mid.Y, FeetZ + Room.CameraLook);
+		FVector Cam = PlayerLoc + Side * Room.CameraSide + Back * Room.CameraBack;
+		Cam.Z = PlayerFeet.Z + Room.CameraHeight + FMath::Max(0.f, OrbitPitch) * 3.f;
+		Cam.X = FMath::Clamp(Cam.X, -Room.InnerHalfX + 70.f, Room.InnerHalfX - 70.f);
+		Cam.Y = FMath::Clamp(Cam.Y, Room.SouthInnerY + 70.f, Room.NorthInnerY - 90.f);
+
+		FVector Look = Chest;
+		Look.X = FMath::Lerp(Chest.X, OppLoc.X, 0.12f);
+		Look.Y = FMath::Lerp(Chest.Y, OppLoc.Y, 0.12f);
+
+		const float Dist = FMath::Max(FVector::Dist(Cam, Look), 80.f);
+		const float Aspect = FMath::Max(ResolveViewAspect(), 1.f);
+		const float HalfTan = FMath::Tan(FMath::DegreesToRadians(FMath::Max(FightFOV, 45.f) * 0.5f));
+		const float VerticalNeed = (BodyHeight * 0.5f + 48.f) / Dist;
+		const float BagNeed = (FVector::Dist2D(Look, OppLoc) + AFBHeavyBag::BodyDiameterCm() + 40.f) / Dist;
+		const float NeededTan = FMath::Max(VerticalNeed * Aspect, FMath::Max(BagNeed, HalfTan));
+		OutFOV = FMath::Clamp(2.f * FMath::RadiansToDegrees(FMath::Atan(NeededTan)), FightFOV, 74.f);
+		OutLocation = Cam;
+		OutLookAt = Look;
 		return;
 	}
 
@@ -516,9 +531,72 @@ void AFBBroadcastCamera::ClearRefereeView()
 	}
 }
 
+void AFBBroadcastCamera::SetCreatorPreview(bool bEnabled, AFBBoxerCharacter* Subject)
+{
+	bCreatorPreview = bEnabled;
+	if (Subject)
+	{
+		CreatorSubject = Subject;
+		PlayerFighter = Subject;
+	}
+	if (bEnabled)
+	{
+		ForcePossessedView();
+		return;
+	}
+	CreatorSubject = nullptr;
+	if (Camera)
+	{
+		Camera->SetFieldOfView(FightFOV);
+	}
+	SnapToFrame();
+}
+
+void AFBBroadcastCamera::UpdateCreatorOrbit(float Yaw, float Pitch, float Zoom)
+{
+	CreatorYaw = Yaw;
+	CreatorPitch = FMath::Clamp(Pitch, -6.f, 28.f);
+	CreatorZoom = FMath::Clamp(Zoom, 0.f, 1.f);
+}
+
+void AFBBroadcastCamera::UpdateCreatorFrame(float DeltaSeconds)
+{
+	AFBBoxerCharacter* Subject = CreatorSubject.Get();
+	if (!IsLiveBoxer(Subject))
+	{
+		Subject = IsLiveBoxer(PlayerFighter.Get()) ? PlayerFighter.Get() : nullptr;
+	}
+	if (!Subject)
+	{
+		return;
+	}
+	const float Half = FMath::Max(Subject->GetStandingHalfHeight(), 90.f);
+	const FVector Chest = Subject->GetActorLocation() + FVector(0.f, 0.f, Half * 0.05f);
+	const FRotator Orbit(CreatorPitch, CreatorYaw, 0.f);
+	const float Dist = FMath::Lerp(190.f, 520.f, CreatorZoom);
+	const FVector Right = FRotationMatrix(Orbit).GetUnitAxis(EAxis::Y);
+	const FVector Look = Chest + Right * Dist * 0.28f - FVector(0.f, 0.f, Half * 0.12f);
+	const FVector Eye = Chest - Orbit.Vector() * Dist + FVector(0.f, 0.f, Dist * 0.02f);
+	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), Eye, DeltaSeconds, 8.f);
+	SetActorLocation(NewLocation);
+	const FRotator Desired = UKismetMathLibrary::FindLookAtRotation(NewLocation, Look);
+	SetActorRotation(FMath::RInterpTo(GetActorRotation(), Desired, DeltaSeconds, 8.f));
+	if (Camera)
+	{
+		const float FOV = FMath::Lerp(38.f, 52.f, CreatorZoom);
+		Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, FOV, DeltaSeconds, 8.f));
+	}
+}
+
 void AFBBroadcastCamera::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (bCreatorPreview)
+	{
+		UpdateCreatorFrame(DeltaSeconds);
+		return;
+	}
 
 	// Keep the fight gap current during a knockdown, but do not move this shot.
 	UpdateSmoothedSeparation(DeltaSeconds);

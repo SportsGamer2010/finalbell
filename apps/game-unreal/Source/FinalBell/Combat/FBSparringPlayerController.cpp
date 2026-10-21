@@ -1,5 +1,6 @@
 ﻿#include "Combat/FBSparringPlayerController.h"
 #include "Camera/FBBroadcastCamera.h"
+#include "Combat/FBBoxerCustomization.h"
 #include "Ring/FBP1ArenaBootstrap.h"
 #include "Combat/FBBoxerCharacter.h"
 #include "GameFramework/SpectatorPawn.h"
@@ -191,10 +192,15 @@ void AFBSparringPlayerController::PlayerTick(float DeltaTime)
 	}
 	if (bFighterSelectVisible && bBuilderOpen)
 	{
-		if (APawn* PreviewPawn = GetPawn())
+		if (bCreatorIdleSpin && !bCreatorDragging)
 		{
-			PreviewPawn->AddActorWorldRotation(FRotator(0.f, 18.f * DeltaTime, 0.f));
+			CreatorYaw += 14.f * DeltaTime;
 		}
+		EnsureCreatorCamera();
+	}
+	else if (bCreatorCameraOn)
+	{
+		ShutdownCreatorCamera();
 	}
 	KeepBroadcastView();
 	EnsureLocalBagRoom();
@@ -316,6 +322,92 @@ void AFBSparringPlayerController::PresentSoloRing()
 		Boxer->RefreshFightCamera();
 	}
 	KeepBroadcastView();
+}
+
+void AFBSparringPlayerController::AddCreatorOrbit(float YawDelta, float PitchDelta)
+{
+	CreatorYaw += YawDelta;
+	CreatorPitch = FMath::Clamp(CreatorPitch + PitchDelta, -6.f, 28.f);
+}
+
+void AFBSparringPlayerController::AddCreatorZoom(float ZoomDelta)
+{
+	CreatorZoom = FMath::Clamp(CreatorZoom + ZoomDelta, 0.f, 1.f);
+}
+
+void AFBSparringPlayerController::SetCreatorDrag(bool bDragging)
+{
+	bCreatorDragging = bDragging;
+}
+
+void AFBSparringPlayerController::SetCreatorMeasure(TSharedPtr<STextBlock> Measure)
+{
+	CreatorMeasure = Measure;
+}
+
+FString AFBSparringPlayerController::GetCreatorMeasureText() const
+{
+	const EFBWeightClassId ClassId = FFBFighterBalance::ClassForDivision(Draft.Division);
+	return FString::Printf(
+		TEXT("%s\n%.0f cm     reach %.0f cm\nThe capsule and punch spheres stay on this class."),
+		*FFBFighterBalance::ClassName(ClassId),
+		FFBBoxerCustomization::DisplayHeightCm(Draft.Look, ClassId),
+		FFBBoxerCustomization::DisplayReachCm(Draft.Look, ClassId));
+}
+
+void AFBSparringPlayerController::EnsureCreatorCamera()
+{
+	if (!IsLocalController() || !GetWorld())
+	{
+		return;
+	}
+	AFBBoxerCharacter* Human = Cast<AFBBoxerCharacter>(GetPawn());
+	AFBBroadcastCamera* Shared = nullptr;
+	for (TActorIterator<AFBBroadcastCamera> It(GetWorld()); It; ++It)
+	{
+		if (!IsValid(*It))
+		{
+			continue;
+		}
+		if (!It->GetOwner() || It->GetOwner() == GetPawn())
+		{
+			Shared = *It;
+			if (!It->GetOwner())
+			{
+				break;
+			}
+		}
+	}
+	if (!Shared || !Human)
+	{
+		return;
+	}
+	if (!bCreatorCameraOn)
+	{
+		CreatorYaw = Human->GetActorRotation().Yaw + 180.f;
+		CreatorPitch = 6.f;
+		CreatorZoom = 0.62f;
+		bCreatorCameraOn = true;
+		Shared->SetCreatorPreview(true, Human);
+	}
+	Shared->UpdateCreatorOrbit(CreatorYaw, CreatorPitch, CreatorZoom);
+}
+
+void AFBSparringPlayerController::ShutdownCreatorCamera()
+{
+	bCreatorCameraOn = false;
+	bCreatorDragging = false;
+	if (!GetWorld())
+	{
+		return;
+	}
+	for (TActorIterator<AFBBroadcastCamera> It(GetWorld()); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			It->SetCreatorPreview(false, nullptr);
+		}
+	}
 }
 
 void AFBSparringPlayerController::KeepBroadcastView()
