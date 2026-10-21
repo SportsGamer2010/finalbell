@@ -51,6 +51,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Network")
 	bool JoinByAddress(const FString& HostAddress, int32 Port = 7777);
 
+	/** Address join, or a clear reason a short code cannot be resolved. */
+	bool TryJoinToken(const FString& Token, FString& OutError);
+
+	/** The string another player can type. This is host:port, never an unresolved room code. */
+	FString GetShareToken() const;
+
+	bool IsEosSignedIn() const;
+
 	UFUNCTION(BlueprintCallable, Category = "FinalBell|Network")
 	bool JoinPrivateRoom(const FString& RoomCode);
 

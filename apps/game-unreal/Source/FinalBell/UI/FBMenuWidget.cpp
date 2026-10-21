@@ -4,6 +4,9 @@
 #include "UI/FBGameInstance.h"
 #include "UI/FBPlayerSettings.h"
 #include "Session/FBSessionSubsystem.h"
+#include "Network/FBPrivateRoomSubsystem.h"
+#include "Components/EditableTextBox.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Blueprint/WidgetTree.h"
 #include "Brushes/SlateColorBrush.h"
 #include "Components/Border.h"
@@ -254,6 +257,11 @@ void UFBMenuWidget::Back()
 	{
 		RevertDisplayChanges();
 	}
+	if (Screen == EFBMenuScreen::Online || Screen == EFBMenuScreen::OnlineJoin)
+	{
+		bOnlineBusy = false;
+		ShowScreen(EFBMenuScreen::Main);
+	}
 }
 
 void UFBMenuWidget::Navigate(int32 Delta)
@@ -281,6 +289,17 @@ void UFBMenuWidget::Navigate(int32 Delta)
 		ModalIndex = (ModalIndex + Delta + ModalButtons.Num()) % ModalButtons.Num();
 		RefreshModal();
 		FocusButton(ModalButtons[ModalIndex]);
+		return;
+	}
+	if ((Screen == EFBMenuScreen::Online || Screen == EFBMenuScreen::OnlineJoin) && OnlineButtons.Num() > 0)
+	{
+		const int32 Count = Screen == EFBMenuScreen::OnlineJoin ? 2 : OnlineButtons.Num();
+		OnlineIndex = (OnlineIndex + Delta + Count) % Count;
+		RefreshOnline();
+		if (OnlineButtons.IsValidIndex(OnlineIndex))
+		{
+			FocusButton(OnlineButtons[OnlineIndex]);
+		}
 	}
 }
 
@@ -356,6 +375,17 @@ void UFBMenuWidget::HandleTitleClicked()
 	bSawRelease = true;
 }
 
+void UFBMenuWidget::HandleOnlineClicked()
+{
+	const int32 Pressed = FindActiveButton(OnlineButtons);
+	if (Pressed != INDEX_NONE)
+	{
+		OnlineIndex = Pressed;
+	}
+	RefreshOnline();
+	Confirm();
+}
+
 void UFBMenuWidget::HandleMainClicked()
 {
 	const int32 Pressed = FindActiveButton(MainButtons);
@@ -409,6 +439,187 @@ void UFBMenuWidget::HandleModalClicked()
 	}
 	RefreshModal();
 	Confirm();
+}
+
+void UFBMenuWidget::BuildOnlineLayer(UOverlay* Root)
+{
+	if (!Root || !WidgetTree)
+	{
+		return;
+	}
+	UBorder* Column = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+	Column->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.f));
+	Column->SetPadding(FMargin(8.f));
+	USizeBox* Width = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	Width->SetWidthOverride(720.f);
+	Width->SetContent(Column);
+	UVerticalBox* Stack = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	Column->SetContent(Stack);
+	OnlineTitle = MakeText(TEXT("ONLINE PRIVATE MATCH"), 36, WarmWhite(), true);
+	OnlineBody = MakeText(TEXT("Host gives you an address. The other player pastes it. This is a two-player listen server."), 16, WarmWhite(), false);
+	OnlineBody->SetAutoWrapText(true);
+	OnlineStatus = MakeText(TEXT(""), 15, MutedGold(), false);
+	OnlineStatus->SetAutoWrapText(true);
+	Stack->AddChildToVerticalBox(OnlineTitle)->SetPadding(FMargin(0.f, 0.f, 0.f, 12.f));
+	Stack->AddChildToVerticalBox(OnlineBody)->SetPadding(FMargin(0.f, 0.f, 0.f, 16.f));
+	JoinField = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
+	JoinField->SetHintText(FText::FromString(TEXT("Paste host:port")));
+	Stack->AddChildToVerticalBox(JoinField)->SetPadding(FMargin(0.f, 0.f, 0.f, 12.f));
+
+	const TCHAR* Labels[] = { TEXT("HOST MATCH"), TEXT("COPY ADDRESS"), TEXT("JOIN MATCH"), TEXT("BACK") };
+	for (const TCHAR* LabelText : Labels)
+	{
+		UBorder* Marker = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+		USizeBox* MarkerSize = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		MarkerSize->SetWidthOverride(4.f);
+		MarkerSize->SetContent(Marker);
+		UTextBlock* Label = MakeText(LabelText, 22, WarmWhite(), true);
+		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		Row->AddChildToHorizontalBox(MarkerSize)->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
+		Row->AddChildToHorizontalBox(Label);
+		UButton* Button = MakeButton(Row);
+		Button->OnClicked.AddDynamic(this, &UFBMenuWidget::HandleOnlineClicked);
+		OnlineButtons.Add(Button);
+		OnlineMarkers.Add(Marker);
+		OnlineLabels.Add(Label);
+		Stack->AddChildToVerticalBox(Button)->SetPadding(FMargin(0.f, 5.f));
+	}
+	Stack->AddChildToVerticalBox(OnlineStatus)->SetPadding(FMargin(0.f, 12.f, 0.f, 0.f));
+	if (UOverlaySlot* OnlineSlot = Root->AddChildToOverlay(Width))
+	{
+		OnlineSlot->SetHorizontalAlignment(HAlign_Left);
+		OnlineSlot->SetVerticalAlignment(VAlign_Center);
+		OnlineSlot->SetPadding(FMargin(72.f, 64.f));
+	}
+	OnlineLayer = Width;
+	OnlineLayer->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UFBMenuWidget::RefreshOnline()
+{
+	const bool bJoin = Screen == EFBMenuScreen::OnlineJoin;
+	if (OnlineTitle)
+	{
+		OnlineTitle->SetText(FText::FromString(bJoin ? TEXT("JOIN MATCH") : TEXT("ONLINE PRIVATE MATCH")));
+	}
+	if (OnlineBody)
+	{
+		OnlineBody->SetText(FText::FromString(bJoin
+			? TEXT("Type or paste the host address. Offline sparring, career, and training do not use this.")
+			: TEXT("Host shares an address. One friend joins. A short code is not used until EOS can resolve it.")));
+	}
+	if (JoinField)
+	{
+		JoinField->SetVisibility(bJoin ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+	const TCHAR* HostLabels[] = { TEXT("HOST MATCH"), TEXT("COPY ADDRESS"), TEXT("JOIN MATCH"), TEXT("BACK") };
+	const TCHAR* JoinLabels[] = { TEXT("JOIN"), TEXT("BACK"), TEXT(""), TEXT("") };
+	for (int32 Index = 0; Index < OnlineButtons.Num(); ++Index)
+	{
+		const bool bShow = !bJoin || Index < 2;
+		if (OnlineButtons[Index])
+		{
+			OnlineButtons[Index]->SetVisibility(bShow ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		}
+		if (OnlineLabels.IsValidIndex(Index) && OnlineLabels[Index])
+		{
+			OnlineLabels[Index]->SetText(FText::FromString(bJoin ? JoinLabels[Index] : HostLabels[Index]));
+		}
+		ApplyRowStyle(
+			OnlineButtons[Index],
+			OnlineMarkers.IsValidIndex(Index) ? OnlineMarkers[Index] : nullptr,
+			OnlineLabels.IsValidIndex(Index) ? OnlineLabels[Index] : nullptr,
+			Index == OnlineIndex && bShow,
+			bShow && !bOnlineBusy);
+	}
+}
+
+void UFBMenuWidget::CopyShareToken()
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UFBPrivateRoomSubsystem* Rooms = GI->GetSubsystem<UFBPrivateRoomSubsystem>())
+		{
+			Rooms->CreatePrivateRoom();
+			const FString Token = Rooms->GetShareToken();
+			FPlatformApplicationMisc::ClipboardCopy(*Token);
+			if (OnlineStatus)
+			{
+				OnlineStatus->SetText(FText::FromString(FString::Printf(TEXT("Copied %s"), *Token)));
+			}
+		}
+	}
+}
+
+void UFBMenuWidget::HostOnline()
+{
+	if (bOnlineBusy || bTravelRequested)
+	{
+		return;
+	}
+	UGameInstance* GI = GetGameInstance();
+	UFBPrivateRoomSubsystem* Rooms = GI ? GI->GetSubsystem<UFBPrivateRoomSubsystem>() : nullptr;
+	if (!Rooms)
+	{
+		if (OnlineStatus)
+		{
+			OnlineStatus->SetText(FText::FromString(TEXT("The private-match service is missing.")));
+		}
+		return;
+	}
+	bOnlineBusy = true;
+	Rooms->CreatePrivateRoom();
+	const FString Token = Rooms->GetShareToken();
+	FPlatformApplicationMisc::ClipboardCopy(*Token);
+	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GI))
+	{
+		FrontEnd->SetSeatMode(EFBMatchSeatMode::Online);
+		FrontEnd->ClearPendingBout();
+		FrontEnd->SetOpenFighterSelect(true);
+		FrontEnd->SetCareerFighterSelect(false);
+	}
+	if (UFBSessionSubsystem* Session = GI->GetSubsystem<UFBSessionSubsystem>())
+	{
+		Session->ClearPlayMode();
+	}
+	if (OnlineStatus)
+	{
+		OnlineStatus->SetText(FText::FromString(FString::Printf(TEXT("Hosting. Share %s"), *Token)));
+	}
+	Rooms->HostListenServer(7777);
+}
+
+void UFBMenuWidget::JoinOnline()
+{
+	if (bOnlineBusy || bTravelRequested)
+	{
+		return;
+	}
+	UGameInstance* GI = GetGameInstance();
+	UFBPrivateRoomSubsystem* Rooms = GI ? GI->GetSubsystem<UFBPrivateRoomSubsystem>() : nullptr;
+	const FString Token = JoinField ? JoinField->GetText().ToString() : FString();
+	FString Error;
+	if (!Rooms || !Rooms->TryJoinToken(Token, Error))
+	{
+		bOnlineBusy = false;
+		if (OnlineStatus)
+		{
+			OnlineStatus->SetText(FText::FromString(Error.IsEmpty() ? TEXT("Could not join that match.") : Error));
+		}
+		return;
+	}
+	bOnlineBusy = true;
+	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GI))
+	{
+		FrontEnd->SetSeatMode(EFBMatchSeatMode::Online);
+		FrontEnd->ClearPendingBout();
+		FrontEnd->SetOpenFighterSelect(true);
+		FrontEnd->SetCareerFighterSelect(false);
+	}
+	if (OnlineStatus)
+	{
+		OnlineStatus->SetText(FText::FromString(TEXT("Connecting.")));
+	}
 }
 
 void UFBMenuWidget::BeginTravel()
@@ -563,6 +774,7 @@ void UFBMenuWidget::BuildInterface()
 		MainSlot->SetPadding(FMargin(72.f, 64.f));
 	}
 	MainLayer = MainWidth;
+	BuildOnlineLayer(Root);
 
 	UBorder* SettingsColumn = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 	SettingsColumn->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, 0.f));
@@ -729,8 +941,9 @@ void UFBMenuWidget::BuildMainEntries()
 		bool bAvailable;
 	};
 	const FEntry Entries[] = {
-		{ EFBMainAction::VersusAI, TEXT("1V1 SPARRING (AI)"), TEXT("Pick two fighters. The bout starts after that."), bTrainingAvailable },
-		{ EFBMainAction::Multiplayer, TEXT("1V1 MULTIPLAYER"), TEXT("Two players in one ring."), bTrainingAvailable },
+		{ EFBMainAction::VersusAI, TEXT("VS AI"), TEXT("Choose your fighter, then the AI opponent."), bTrainingAvailable },
+		{ EFBMainAction::LocalVersus, TEXT("LOCAL VS"), TEXT("Two players on this computer. Each controller picks a fighter."), bTrainingAvailable },
+		{ EFBMainAction::Online, TEXT("ONLINE PRIVATE MATCH"), TEXT("Host a match or join with an address. Offline modes stay available."), bTrainingAvailable },
 		{ EFBMainAction::Training, TEXT("HEAVY BAG TRAINING"), bTrainingAvailable ? TEXT("Train on the hanging bag. No bout clock and no knockdowns.") : TEXT("The training level is not available."), bTrainingAvailable },
 		{ EFBMainAction::Career, TEXT("1V1 CAREER"), TEXT("Three 3:00 rounds. Your created fighter against a premade in the same class. The result is saved on that fighter."), bTrainingAvailable },
 		{ EFBMainAction::Settings, TEXT("SETTINGS"), TEXT("Master volume, display, and reduced motion."), true },
@@ -859,6 +1072,7 @@ void UFBMenuWidget::ShowScreen(EFBMenuScreen NewScreen)
 	SetLayer(CreditsLayer, NewScreen == EFBMenuScreen::Credits ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	SetLayer(ModalLayer, (NewScreen == EFBMenuScreen::QuitConfirm || NewScreen == EFBMenuScreen::DisplayConfirm) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	SetLayer(LoadingLayer, NewScreen == EFBMenuScreen::Loading ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	SetLayer(OnlineLayer, (NewScreen == EFBMenuScreen::Online || NewScreen == EFBMenuScreen::OnlineJoin) ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 
 	if (NewScreen == EFBMenuScreen::Main)
 	{
@@ -904,6 +1118,20 @@ void UFBMenuWidget::ShowScreen(EFBMenuScreen NewScreen)
 		if (ModalButtons.IsValidIndex(ModalIndex))
 		{
 			FocusButton(ModalButtons[ModalIndex]);
+		}
+	}
+	else if (NewScreen == EFBMenuScreen::Online || NewScreen == EFBMenuScreen::OnlineJoin)
+	{
+		OnlineIndex = 0;
+		bOnlineBusy = false;
+		RefreshOnline();
+		if (NewScreen == EFBMenuScreen::OnlineJoin && JoinField)
+		{
+			JoinField->SetKeyboardFocus();
+		}
+		else if (OnlineButtons.IsValidIndex(0))
+		{
+			FocusButton(OnlineButtons[0]);
 		}
 	}
 	else if (NewScreen == EFBMenuScreen::Title)
@@ -1101,7 +1329,21 @@ void UFBMenuWidget::ActivateCurrent()
 		switch (MainActions[MainIndex])
 		{
 		case EFBMainAction::VersusAI:
+			if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
+			{
+				FrontEnd->SetSeatMode(EFBMatchSeatMode::VersusAI);
+			}
 			TravelToRing(EFBPlayMode::VersusAI, true);
+			break;
+		case EFBMainAction::LocalVersus:
+			if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
+			{
+				FrontEnd->SetSeatMode(EFBMatchSeatMode::LocalVersus);
+			}
+			TravelToRing(EFBPlayMode::Multiplayer, true);
+			break;
+		case EFBMainAction::Online:
+			ShowScreen(EFBMenuScreen::Online);
 			break;
 		case EFBMainAction::Multiplayer:
 			TravelToRing(EFBPlayMode::Multiplayer, false);
@@ -1123,6 +1365,38 @@ void UFBMenuWidget::ActivateCurrent()
 			break;
 		default:
 			break;
+		}
+		return;
+	}
+	if (Screen == EFBMenuScreen::Online)
+	{
+		if (OnlineIndex == 0)
+		{
+			HostOnline();
+		}
+		else if (OnlineIndex == 1)
+		{
+			CopyShareToken();
+		}
+		else if (OnlineIndex == 2)
+		{
+			ShowScreen(EFBMenuScreen::OnlineJoin);
+		}
+		else
+		{
+			ShowScreen(EFBMenuScreen::Main);
+		}
+		return;
+	}
+	if (Screen == EFBMenuScreen::OnlineJoin)
+	{
+		if (OnlineIndex == 0)
+		{
+			JoinOnline();
+		}
+		else
+		{
+			ShowScreen(EFBMenuScreen::Online);
 		}
 		return;
 	}
@@ -1194,6 +1468,8 @@ void UFBMenuWidget::TravelToRing(EFBPlayMode Mode, bool bOpenFighterSelect)
 		{
 			const bool bRingMode = MainActions[Index] == EFBMainAction::VersusAI
 				|| MainActions[Index] == EFBMainAction::Multiplayer
+				|| MainActions[Index] == EFBMainAction::LocalVersus
+				|| MainActions[Index] == EFBMainAction::Online
 				|| MainActions[Index] == EFBMainAction::Training
 				|| MainActions[Index] == EFBMainAction::Career;
 			if (!bRingMode)
@@ -1238,8 +1514,8 @@ void UFBMenuWidget::TravelToRing(EFBPlayMode Mode, bool bOpenFighterSelect)
 	if (LoadingTitle)
 	{
 		const TCHAR* Heading =
-			Mode == EFBPlayMode::VersusAI ? TEXT("1V1 SPARRING (AI)") :
-			Mode == EFBPlayMode::Multiplayer ? TEXT("1V1 MULTIPLAYER") :
+			Mode == EFBPlayMode::VersusAI ? TEXT("VS AI") :
+			Mode == EFBPlayMode::Multiplayer ? TEXT("LOCAL VS") :
 			Mode == EFBPlayMode::Career ? TEXT("1V1 CAREER") :
 			TEXT("HEAVY BAG TRAINING");
 		LoadingTitle->SetText(FText::FromString(Heading));

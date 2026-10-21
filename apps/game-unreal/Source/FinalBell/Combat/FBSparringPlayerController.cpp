@@ -1,4 +1,8 @@
 ﻿#include "Combat/FBSparringPlayerController.h"
+#include "Combat/FBSelectNav.h"
+#include "Input/FBGameViewportClient.h"
+#include "Net/UnrealNetwork.h"
+#include "Kismet/GameplayStatics.h"
 #include "Camera/FBBroadcastCamera.h"
 #include "Combat/FBBoxerCustomization.h"
 #include "Ring/FBP1ArenaBootstrap.h"
@@ -131,6 +135,12 @@ void AFBSparringPlayerController::BeginPlay()
 			}
 			if (FrontEnd->ConsumeOpenFighterSelect())
 			{
+				const EFBMatchSeatMode Seat = FrontEnd->GetSeatMode();
+				if (Seat == EFBMatchSeatMode::LocalVersus || Seat == EFBMatchSeatMode::Online)
+				{
+					OpenSeatedSelect(Seat);
+					return;
+				}
 				ChooseMode(FrontEnd->ConsumeCareerFighterSelect() ? EFBPlayMode::Career : EFBPlayMode::VersusAI);
 				return;
 			}
@@ -176,6 +186,28 @@ void AFBSparringPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReas
 void AFBSparringPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+	if (bForwardSelectToPrimary)
+	{
+		const float StickY = GetInputAnalogKeyState(EKeys::Gamepad_LeftY);
+		const float StickX = GetInputAnalogKeyState(EKeys::Gamepad_LeftX);
+		const float Axis = FMath::Abs(StickY) >= FMath::Abs(StickX) ? StickY : -StickX;
+		if (FMath::Abs(Axis) < 0.35f)
+		{
+			MenuStickRepeat = 0.f;
+		}
+		else
+		{
+			MenuStickRepeat -= DeltaTime;
+			if (MenuStickRepeat <= 0.f)
+			{
+				MenuStickRepeat = 0.28f;
+				if (AFBSparringPlayerController* Primary = PrimarySelectController())
+				{
+					Primary->NudgeFromDevice(1, Axis > 0.f ? -1 : 1);
+				}
+			}
+		}
+	}
 	UpdateFightMeters();
 	SubmitLocalGetUpAim();
 	UpdateBoutOverlay(DeltaTime);
@@ -201,6 +233,12 @@ void AFBSparringPlayerController::PlayerTick(float DeltaTime)
 	else if (bCreatorCameraOn)
 	{
 		ShutdownCreatorCamera();
+	}
+	if (bFighterSelectVisible && IsLocalController() && GetLocalPlayer() && GetGameInstance()
+		&& GetLocalPlayer() == GetGameInstance()->GetFirstGamePlayer())
+	{
+		WatchSecondDevice();
+		PullLobbyPicks();
 	}
 	KeepBroadcastView();
 	EnsureLocalBagRoom();
@@ -928,11 +966,347 @@ void AFBSparringPlayerController::FBRoom()
 
 bool AFBSparringPlayerController::InputKey(const FInputKeyEventArgs& Params)
 {
+	if (bForwardSelectToPrimary)
+	{
+		if (AFBSparringPlayerController* Primary = PrimarySelectController())
+		{
+			if (Params.Event == IE_Pressed)
+			{
+				const bool bAccept = Params.Key == EKeys::Enter || Params.Key == EKeys::Gamepad_FaceButton_Bottom || Params.Key == EKeys::Gamepad_Special_Right;
+				if (bAccept)
+				{
+					if (!Primary->bLocalSecondJoined)
+					{
+						Primary->JoinFromDevice(1);
+					}
+					else
+					{
+						Primary->AcceptFromDevice(1);
+					}
+				}
+				else if (Params.Key == EKeys::Escape || Params.Key == EKeys::Gamepad_FaceButton_Right)
+				{
+					Primary->MenuControllerId = 1;
+					Primary->BackMenu(false);
+				}
+			}
+		}
+		return true;
+	}
+	MenuControllerId = Params.ControllerId > 0 ? 1 : 0;
 	if ((Params.Event == IE_Pressed || Params.Event == IE_Repeat) && RouteMenuKey(Params.Key, Params.Event == IE_Repeat))
 	{
 		return true;
 	}
 	return Super::InputKey(Params);
+}
+
+void AFBSparringPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AFBSparringPlayerController, MatchSeat);
+}
+
+AFBSparringPlayerController* AFBSparringPlayerController::PrimarySelectController()
+{
+	if (!GetWorld() || !GetGameInstance())
+	{
+		return this;
+	}
+	ULocalPlayer* First = GetGameInstance()->GetFirstGamePlayer();
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get());
+		if (Other && Other->GetLocalPlayer() == First)
+		{
+			return Other;
+		}
+	}
+	return this;
+}
+
+bool AFBSparringPlayerController::IsSequentialSelect() const
+{
+	return SeatMode != EFBMatchSeatMode::LocalVersus && SeatMode != EFBMatchSeatMode::Online;
+}
+
+bool AFBSparringPlayerController::UsesSplitSeats() const
+{
+	return SeatMode == EFBMatchSeatMode::LocalVersus || SeatMode == EFBMatchSeatMode::Online;
+}
+
+int32 AFBSparringPlayerController::PanelForCurrentDevice(bool bPointer) const
+{
+	if (bPointer)
+	{
+		return FFBSelectNav::AllowsPointer(SeatMode == EFBMatchSeatMode::Unset ? EFBMatchSeatMode::VersusAI : SeatMode, MatchSeat, ActiveSide, 0)
+			? ActiveSide
+			: INDEX_NONE;
+	}
+	return FFBSelectNav::PanelForDevice(
+		SeatMode == EFBMatchSeatMode::Unset ? EFBMatchSeatMode::VersusAI : SeatMode,
+		MatchSeat, ActiveSide, bLocalSecondJoined, MenuControllerId);
+}
+
+bool AFBSparringPlayerController::CanTouchSelectSide(int32 Side, bool bPointer) const
+{
+	const EFBMatchSeatMode Mode = SeatMode == EFBMatchSeatMode::Unset ? EFBMatchSeatMode::VersusAI : SeatMode;
+	if (bPointer)
+	{
+		return FFBSelectNav::AllowsPointer(Mode, MatchSeat, ActiveSide, Side);
+	}
+	return FFBSelectNav::PanelForDevice(Mode, MatchSeat, ActiveSide, bLocalSecondJoined, MenuControllerId) == Side;
+}
+
+void AFBSparringPlayerController::RememberFocus(int32 Side, int32 Index)
+{
+	if (Side == 1)
+	{
+		RightFocus = Index;
+	}
+	else if (Side == 2)
+	{
+		ActionFocus = Index;
+	}
+	else
+	{
+		LeftFocus = Index;
+	}
+	SelectFocus = Index;
+}
+
+int32 AFBSparringPlayerController::FocusOnSide(int32 Side) const
+{
+	if (Side == 1)
+	{
+		return RightFocus;
+	}
+	if (Side == 2)
+	{
+		return ActionFocus;
+	}
+	return LeftFocus;
+}
+
+void AFBSparringPlayerController::PaintSelectChrome()
+{
+	const FLinearColor Paper = FBMenuArt::Paper();
+	const FLinearColor Accent = FBMenuArt::Accent();
+	const FLinearColor Quiet = FBMenuArt::Quiet();
+	for (int32 Index = 0; Index < SelectRows.Num(); ++Index)
+	{
+		const int32 Side = SelectSides.IsValidIndex(Index) ? SelectSides[Index] : 0;
+		const bool bOn = UsesSplitSeats()
+			? (Side == 0 && Index == LeftFocus) || (Side == 1 && bLocalSecondJoined && Index == RightFocus) || (Side == 1 && SeatMode == EFBMatchSeatMode::Online && Index == RightFocus) || (Side == 2 && Index == ActionFocus && ActiveSide == 2)
+			: Index == FocusOnSide(ActiveSide);
+		if (SelectRows[Index].Fill.IsValid())
+		{
+			SelectRows[Index].Fill->SetBorderBackgroundColor(bOn ? Accent : FLinearColor::Transparent);
+		}
+		if (SelectRows[Index].Tick.IsValid())
+		{
+			SelectRows[Index].Tick->SetBorderBackgroundColor(bOn ? Paper : FLinearColor::Transparent);
+		}
+		if (SelectRows[Index].Label.IsValid())
+		{
+			SelectRows[Index].Label->SetColorAndOpacity(bOn ? Paper : Quiet);
+		}
+	}
+}
+
+void AFBSparringPlayerController::OpenSeatedSelect(EFBMatchSeatMode Mode)
+{
+	SeatMode = Mode;
+	bCareerSelect = false;
+	ActiveSide = 0;
+	bLeftLocked = false;
+	bRightLocked = false;
+	bLocalSecondJoined = false;
+	if (HasAuthority() && MatchSeat < 0)
+	{
+		MatchSeat = 0;
+	}
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UFBSessionSubsystem* Session = GI->GetSubsystem<UFBSessionSubsystem>())
+		{
+			Session->ClearPlayMode();
+		}
+	}
+	if (HasAuthority())
+	{
+		if (AFBSparringGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AFBSparringGameMode>() : nullptr)
+		{
+			GM->SetAwaitingFighterConfirm(true);
+		}
+	}
+	HideModeMenu();
+	ShowFighterSelect();
+}
+
+void AFBSparringPlayerController::EnsureSecondLocalPlayer()
+{
+	if (SeatMode != EFBMatchSeatMode::LocalVersus || !GetWorld() || !GetGameInstance())
+	{
+		return;
+	}
+	if (UFBGameViewportClient* Viewport = Cast<UFBGameViewportClient>(GetWorld()->GetGameViewport()))
+	{
+		Viewport->SetSelectPadMode(false, true);
+	}
+	if (GetGameInstance()->GetNumLocalPlayers() >= 2)
+	{
+		return;
+	}
+	UGameplayStatics::CreatePlayer(this, 1, true);
+	if (GetGameInstance()->GetNumLocalPlayers() < 2)
+	{
+		return;
+	}
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get());
+		if (Other && Other != this && Other->IsLocalController())
+		{
+			Other->bForwardSelectToPrimary = true;
+			Other->SeatMode = EFBMatchSeatMode::LocalVersus;
+			Other->bShowMouseCursor = false;
+		}
+	}
+}
+
+void AFBSparringPlayerController::NoteSecondJoined()
+{
+	if (bLocalSecondJoined)
+	{
+		return;
+	}
+	bLocalSecondJoined = true;
+	bSecondDeviceMissing = false;
+	SelectStatus = TEXT("Player 2 joined. That controller chooses the right side.");
+	RebuildFighterSelect();
+}
+
+void AFBSparringPlayerController::JoinFromDevice(int32 DeviceSeat)
+{
+	if (SeatMode == EFBMatchSeatMode::LocalVersus && DeviceSeat == 1)
+	{
+		NoteSecondJoined();
+	}
+}
+
+void AFBSparringPlayerController::NudgeFromDevice(int32 DeviceSeat, int32 Delta)
+{
+	MenuControllerId = DeviceSeat;
+	NudgeMenu(Delta);
+}
+
+void AFBSparringPlayerController::AcceptFromDevice(int32 DeviceSeat)
+{
+	MenuControllerId = DeviceSeat;
+	if (bFighterSelectVisible)
+	{
+		ActivateSelectRow();
+	}
+}
+
+void AFBSparringPlayerController::WatchSecondDevice()
+{
+	if (SeatMode != EFBMatchSeatMode::LocalVersus || !IsLocalController())
+	{
+		return;
+	}
+	EnsureSecondLocalPlayer();
+	int32 Gamepads = 0;
+	IPlatformInputDeviceMapper& Mapper = IPlatformInputDeviceMapper::Get();
+	TArray<FInputDeviceId> Devices;
+	Mapper.GetAllConnectedInputDevices(Devices);
+	const FInputDeviceId Keyboard = Mapper.GetDefaultInputDevice();
+	for (const FInputDeviceId& Device : Devices)
+	{
+		if (Device.IsValid() && Device != Keyboard)
+		{
+			++Gamepads;
+		}
+	}
+	const bool bMissing = bLocalSecondJoined && Gamepads < 2;
+	if (bMissing != bSecondDeviceMissing)
+	{
+		bSecondDeviceMissing = bMissing;
+		SelectStatus = bMissing
+			? TEXT("Player 2's controller disconnected. Reconnect it before the bout starts.")
+			: TEXT("Player 2 is connected.");
+		RebuildFighterSelect();
+	}
+}
+
+void AFBSparringPlayerController::PullLobbyPicks()
+{
+	if (SeatMode != EFBMatchSeatMode::Online || !GetWorld())
+	{
+		return;
+	}
+	const AFBSparringGameState* State = GetWorld()->GetGameState<AFBSparringGameState>();
+	if (!State)
+	{
+		return;
+	}
+	if (State->LobbyProtocolSeen != AFBSparringGameState::LobbyProtocol)
+	{
+		SelectStatus = TEXT("This match is a different build. Use the same packaged game.");
+		return;
+	}
+	if (!State->LobbyNotice.IsEmpty() && SelectStatus != State->LobbyNotice)
+	{
+		SelectStatus = State->LobbyNotice;
+	}
+	const bool bBlueChanged = State->BluePick.Id != SeenBlueId || (MatchSeat != 0 && State->bBlueReady != bLeftLocked);
+	const bool bRedChanged = State->RedPick.Id != SeenRedId || (MatchSeat != 1 && State->bRedReady != bRightLocked);
+	if (!bBlueChanged && !bRedChanged)
+	{
+		return;
+	}
+	SeenBlueId = State->BluePick.Id;
+	SeenRedId = State->RedPick.Id;
+	if (MatchSeat != 0)
+	{
+		bLeftLocked = State->bBlueReady;
+	}
+	if (MatchSeat != 1)
+	{
+		bRightLocked = State->bRedReady;
+	}
+	for (int32 Index = 0; Index < SelectRoster.Num(); ++Index)
+	{
+		if (!SeenBlueId.IsEmpty() && SelectRoster[Index].Id == SeenBlueId)
+		{
+			PlayerPick = Index;
+		}
+		if (!SeenRedId.IsEmpty() && SelectRoster[Index].Id == SeenRedId)
+		{
+			OpponentPick = Index;
+		}
+	}
+	RebuildFighterSelect();
+}
+
+void AFBSparringPlayerController::OnRep_MatchSeat()
+{
+	if (SeatMode == EFBMatchSeatMode::Online && bFighterSelectVisible)
+	{
+		ActiveSide = MatchSeat == 0 ? 0 : 1;
+		RebuildFighterSelect();
+	}
+}
+
+void AFBSparringPlayerController::ClientMatchClosed_Implementation(const FString& Why)
+{
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 8.f, FColor::Red, Why);
+	}
+	SelectStatus = Why;
+	ReturnToMainMenu();
 }
 
 TSharedRef<SWidget> AFBSparringPlayerController::WrapForPad(TSharedRef<SWidget> Content)
@@ -1170,8 +1544,16 @@ void AFBSparringPlayerController::NudgeMenu(int32 Delta)
 	}
 	if (bFighterSelectVisible && SelectRows.Num() > 0)
 	{
-		SelectFocus = (SelectFocus + Delta + SelectRows.Num()) % SelectRows.Num();
-		PaintChrome(SelectRows, SelectFocus);
+		const int32 Panel = FFBSelectNav::PanelForDevice(
+			SeatMode == EFBMatchSeatMode::Unset ? EFBMatchSeatMode::VersusAI : SeatMode,
+			MatchSeat, ActiveSide, bLocalSecondJoined, MenuControllerId);
+		if (Panel == INDEX_NONE)
+		{
+			return;
+		}
+		const int32 Next = FFBSelectNav::Step(SelectSides, FocusOnSide(Panel), Delta, Panel);
+		RememberFocus(Panel, Next);
+		PaintSelectChrome();
 		return;
 	}
 	if (bModeMenuVisible && ModeRows.Num() > 0)
@@ -1262,6 +1644,44 @@ void AFBSparringPlayerController::BackMenu(bool bFromOptions)
 			RebuildFighterSelect();
 			return;
 		}
+		if (IsSequentialSelect() && ActiveSide == 2)
+		{
+			ActiveSide = 1;
+			bRightLocked = false;
+			SelectStatus = TEXT("Choose AI Opponent.");
+			RebuildFighterSelect();
+			return;
+		}
+		if (IsSequentialSelect() && ActiveSide == 1)
+		{
+			ActiveSide = 0;
+			bLeftLocked = false;
+			SelectStatus = TEXT("Choose Your Fighter.");
+			RebuildFighterSelect();
+			return;
+		}
+		if (UsesSplitSeats())
+		{
+			const int32 Panel = FFBSelectNav::PanelForDevice(SeatMode, MatchSeat, ActiveSide, bLocalSecondJoined, MenuControllerId);
+			if (Panel == 0 && bLeftLocked)
+			{
+				bLeftLocked = false;
+				ServerClearSeat();
+				SelectStatus = TEXT("Player 1 unlocked that fighter.");
+				RebuildFighterSelect();
+				return;
+			}
+			if (Panel == 1 && bRightLocked)
+			{
+				bRightLocked = false;
+				ServerClearSeat();
+				SelectStatus = TEXT("Player 2 unlocked that fighter.");
+				RebuildFighterSelect();
+				return;
+			}
+			ReturnToMainMenu();
+			return;
+		}
 		HideFighterSelect();
 		ShowModeMenu();
 		return;
@@ -1313,6 +1733,22 @@ bool AFBSparringPlayerController::RouteMenuKey(const FKey& Key, bool bRepeat)
 			return false;
 		}
 		ShowPauseMenu();
+		Mark();
+		return true;
+	}
+	if (bFighterSelectVisible && SeatMode == EFBMatchSeatMode::LocalVersus && MenuControllerId == 1 && !bLocalSecondJoined)
+	{
+		if (!bRepeat && (bAccept || bOptions))
+		{
+			NoteSecondJoined();
+			Mark();
+			return true;
+		}
+		Mark();
+		return true;
+	}
+	if (bFighterSelectVisible && !IsSequentialSelect() == false && MenuControllerId > 0 && SeatMode != EFBMatchSeatMode::LocalVersus)
+	{
 		Mark();
 		return true;
 	}
@@ -1703,11 +2139,23 @@ TSharedRef<SWidget> AFBSparringPlayerController::MakeFocusRow(const FString& Lab
 
 void AFBSparringPlayerController::ActivateSelectRow()
 {
-	if (!SelectActions.IsValidIndex(SelectFocus))
+	const int32 Panel = FFBSelectNav::PanelForDevice(
+		SeatMode == EFBMatchSeatMode::Unset ? EFBMatchSeatMode::VersusAI : SeatMode,
+		MatchSeat, ActiveSide, bLocalSecondJoined, MenuControllerId);
+	if (Panel == INDEX_NONE)
 	{
 		return;
 	}
-	TFunction<void()> Action = SelectActions[SelectFocus];
+	const int32 Index = FocusOnSide(Panel);
+	if (!SelectActions.IsValidIndex(Index))
+	{
+		return;
+	}
+	if (SelectSides.IsValidIndex(Index) && SelectSides[Index] != Panel)
+	{
+		return;
+	}
+	TFunction<void()> Action = SelectActions[Index];
 	if (Action)
 	{
 		Action();

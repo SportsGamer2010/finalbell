@@ -21,6 +21,9 @@ public:
 	static void TravelToFrontEnd(UObject* ContextObject);
 	void NotifyFrontEndArrived();
 
+	void SetSeatMode(EFBMatchSeatMode Mode);
+	EFBMatchSeatMode GetSeatMode() const { return SeatMode; }
+
 	void SetOpenFighterSelect(bool bOpen);
 	bool ConsumeOpenFighterSelect();
 	void SetCareerFighterSelect(bool bCareer);
@@ -45,6 +48,7 @@ private:
 	EFBAIDifficulty PendingDifficulty = EFBAIDifficulty::Club;
 
 	bool bPendingBout = false;
+	EFBMatchSeatMode SeatMode = EFBMatchSeatMode::Unset;
 	bool bOpenFighterSelect = false;
 	bool bCareerFighterSelect = false;
 	bool bFrontEndBootHandled = false;

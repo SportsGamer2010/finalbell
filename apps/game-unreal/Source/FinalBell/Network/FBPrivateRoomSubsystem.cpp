@@ -5,6 +5,8 @@
 #include "GameFramework/PlayerController.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
+#include "OnlineSubsystem.h"
+#include "Interfaces/OnlineIdentityInterface.h"
 
 FString UFBPrivateRoomSubsystem::GenerateRoomCode() const
 {
@@ -75,11 +77,58 @@ FFBPrivateRoomInfo UFBPrivateRoomSubsystem::CreatePrivateRoom()
 	{
 		GEngine->AddOnScreenDebugMessage(
 			-1, 12.f, FColor::Green,
-			FString::Printf(TEXT("Room %s — share %s:%d (Tailscale/LAN). Partner: FBJoin %s"),
-				*ActiveRoom.RoomCode, *ActiveRoom.HostAddress, ActiveRoom.Port, *ActiveRoom.HostAddress));
+			FString::Printf(TEXT("Share %s — the other player pastes that address."), *GetShareToken()));
 	}
 
 	return ActiveRoom;
+}
+
+FString UFBPrivateRoomSubsystem::GetShareToken() const
+{
+	const FString Host = ActiveRoom.HostAddress.IsEmpty() ? GetPreferredHostAddress() : ActiveRoom.HostAddress;
+	const int32 Port = ActiveRoom.Port > 0 ? ActiveRoom.Port : 7777;
+	return FString::Printf(TEXT("%s:%d"), *Host, Port);
+}
+
+bool UFBPrivateRoomSubsystem::IsEosSignedIn() const
+{
+	IOnlineSubsystem* EOS = IOnlineSubsystem::Get(TEXT("EOS"));
+	if (!EOS)
+	{
+		return false;
+	}
+	const IOnlineIdentityPtr Identity = EOS->GetIdentityInterface();
+	return Identity.IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn;
+}
+
+bool UFBPrivateRoomSubsystem::TryJoinToken(const FString& Token, FString& OutError)
+{
+	const FString Trimmed = Token.TrimStartAndEnd();
+	if (Trimmed.IsEmpty())
+	{
+		OutError = TEXT("Enter the host address, or paste it.");
+		return false;
+	}
+	const bool bLooksLikeAddress = Trimmed.Contains(TEXT(".")) || Trimmed.Contains(TEXT(":"));
+	if (!bLooksLikeAddress)
+	{
+		if (!IsEosSignedIn())
+		{
+			OutError = TEXT("A short code needs EOS, and this build is not signed in. Paste the host address instead.");
+		}
+		else
+		{
+			OutError = TEXT("EOS is signed in, but this build joins by host address. Paste host:port.");
+		}
+		return false;
+	}
+	if (!JoinByAddress(Trimmed, 7777))
+	{
+		OutError = TEXT("That address could not be used. Use host:port, for example 100.64.0.2:7777.");
+		return false;
+	}
+	OutError.Reset();
+	return true;
 }
 
 void UFBPrivateRoomSubsystem::SetHostAddress(const FString& Address)

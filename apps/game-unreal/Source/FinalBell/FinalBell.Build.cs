@@ -29,7 +29,9 @@ public class FinalBell : ModuleRules
 			"NetCore",
 			"Sockets",
 			"AIModule",
-			"AnimationCore"
+			"AnimationCore",
+			"OnlineSubsystem",
+			"OnlineSubsystemUtils"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

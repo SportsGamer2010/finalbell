@@ -46,6 +46,18 @@ public:
 	void FBRoom();
 
 	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	/** Second local controller. The primary player owns the selection widget. */
+	void NudgeFromDevice(int32 DeviceSeat, int32 Delta);
+	void AcceptFromDevice(int32 DeviceSeat);
+	void JoinFromDevice(int32 DeviceSeat);
+	void NoteSecondJoined();
+	void AssignMatchSeat(int32 Seat) { MatchSeat = Seat; }
+	int32 GetMatchSeat() const { return MatchSeat; }
+
+	UFUNCTION(Client, Reliable)
+	void ClientMatchClosed(const FString& Why);
 
 	/** Menu keys. Returns true when the key belongs to a menu, or to pause while a bout is up. */
 	bool RouteMenuKey(const FKey& Key, bool bRepeat);
@@ -102,6 +114,18 @@ protected:
 
 	UFUNCTION(Client, Reliable)
 	void ClientBoutRefused(const FString& Why);
+
+	UFUNCTION(Server, Reliable)
+	void ServerCommitFighter(FFBFighterRecord Record);
+
+	UFUNCTION(Server, Reliable)
+	void ServerClearSeat();
+
+	UFUNCTION(Server, Reliable)
+	void ServerStartSeatedBout();
+
+	UFUNCTION()
+	void OnRep_MatchSeat();
 
 	/** Second PIE window: gym, movable lights, ringside camera. No extra fighter. */
 	UFUNCTION(Client, Reliable)
@@ -175,6 +199,36 @@ protected:
 	int32 ModeFocus = 0;
 	int32 PauseFocus = 0;
 	int32 SelectFocus = 0;
+	int32 LeftFocus = 0;
+	int32 RightFocus = 0;
+	int32 ActionFocus = 0;
+	int32 ActiveSide = 0;
+	int32 MenuControllerId = 0;
+	EFBMatchSeatMode SeatMode = EFBMatchSeatMode::Unset;
+	TArray<int32> SelectSides;
+	bool bLeftLocked = false;
+	bool bRightLocked = false;
+	bool bLocalSecondJoined = false;
+	bool bSecondDeviceMissing = false;
+	bool bForwardSelectToPrimary = false;
+	FString SeenBlueId;
+	FString SeenRedId;
+
+	UPROPERTY(ReplicatedUsing = OnRep_MatchSeat)
+	int32 MatchSeat = -1;
+
+	bool IsSequentialSelect() const;
+	bool UsesSplitSeats() const;
+	int32 PanelForCurrentDevice(bool bPointer) const;
+	bool CanTouchSelectSide(int32 Side, bool bPointer) const;
+	void RememberFocus(int32 Side, int32 Index);
+	int32 FocusOnSide(int32 Side) const;
+	void PaintSelectChrome();
+	void OpenSeatedSelect(EFBMatchSeatMode Mode);
+	void EnsureSecondLocalPlayer();
+	void WatchSecondDevice();
+	void PullLobbyPicks();
+	AFBSparringPlayerController* PrimarySelectController();
 	float MenuStickRepeat = 0.f;
 	bool bFightMappingWanted = true;
 	bool bSawViewportFocus = true;

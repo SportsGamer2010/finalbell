@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
 #include "Combat/FBCombatTypes.h"
+#include "Combat/FBFighterBalance.h"
 #include "FBSparringGameState.generated.h"
 
 class AFBBoxerCharacter;
@@ -64,4 +65,25 @@ public:
 	/** Short referee line: BREAK, WARNING, POINT DEDUCTION. Empty when he is quiet. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Bout")
 	FString RefereeCall;
+
+	/** Bump when the lobby record layout changes. A guest with a different number is refused. */
+	static constexpr int32 LobbyProtocol = 1;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	int32 LobbyProtocolSeen = LobbyProtocol;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	FFBFighterRecord BluePick;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	FFBFighterRecord RedPick;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	bool bBlueReady = false;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	bool bRedReady = false;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	FString LobbyNotice;
 };

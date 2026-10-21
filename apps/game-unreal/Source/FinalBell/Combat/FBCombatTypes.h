@@ -22,6 +22,19 @@ enum class EFBPlayMode : uint8
 	Career
 };
 
+/**
+ * Who is choosing fighters. This is not a network id and not a controller index.
+ * Online guests keep local device 0 and still sit in match seat 1.
+ */
+UENUM(BlueprintType)
+enum class EFBMatchSeatMode : uint8
+{
+	Unset = 0,
+	VersusAI,
+	LocalVersus,
+	Online
+};
+
 UENUM(BlueprintType)
 enum class EFBAttackId : uint8
 {

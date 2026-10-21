@@ -22,9 +22,14 @@ public:
 
 	void BindPieLocalPlayerToGamepad();
 
+	/** Versus AI keeps extra pads off the one human. Local VS gives the second pad to the second player. */
+	void SetSelectPadMode(bool bOneHuman, bool bTwoHumans);
+
 private:
 	bool RouteGamepadToMatchingPieViewport(const FInputKeyEventArgs& EventArgs, bool bAxis);
 	void ClaimPadsForLocalPlayer();
 
 	bool bPieBindingApplied = false;
+	bool bOneHumanPads = false;
+	bool bTwoHumanPads = false;
 };

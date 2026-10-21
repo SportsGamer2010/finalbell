@@ -10,6 +10,14 @@ Tune the prototype on the boxer: Hook Glove Radius, Hook Lead Yaw Degrees, Hook 
 
 `Build.bat FinalBellEditor Win64 Development` finished with `Result: Succeeded` (about 37s). Play in the editor was not run. The hook was not reviewed on the fighter, so it is not called realistic.
 
+## 2026-10-21 — Private match menu and selection ownership
+
+The play menu now has VS AI, Local VS, and Online Private Match, and it still has Career, Training, and Settings. Online Host copies a `host:port` address and starts a listen server. Join pastes that address. A short code is refused with an error because EOS is not signed in, so the game does not invent a code the other computer cannot resolve.
+
+Fighter select no longer wraps from the left list into the right list. VS AI confirms the human, then the AI. Local VS keeps the second controller on the right panel after that player presses Start. An online guest's local controller edits the right seat.
+
+`Build.bat FinalBellEditor Win64 Development` finished with `Result: Succeeded`. Play in the editor was not run. `FinalBell.Select.Containment` was not launched. A packaged build was not cooked. EOS relay was not verified. Two computers were not connected.
+
 ## 2026-10-21 — Create-a-Boxer prototype
 
 The create screen now has a 3D preview. While Create a Fighter is open, the left side of the screen is clear and the ringside camera orbits that pawn. Drag rotates, the wheel zooms, and Zoom in / Zoom out are on the pad list. Body and face controls are sliders and update the pawn without rebuilding the menu. Save and load still use `FBFighterRoster` (ten created fighters). Reset look and Randomize are on that screen.

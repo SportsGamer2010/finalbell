@@ -74,14 +74,84 @@ void AFBSparringGameMode::BeginPlay()
 void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
+	if (AFBSparringPlayerController* PC = Cast<AFBSparringPlayerController>(NewPlayer))
+	{
+		if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
+		{
+			const EFBMatchSeatMode SeatMode = FrontEnd->GetSeatMode();
+			if (SeatMode == EFBMatchSeatMode::Online || SeatMode == EFBMatchSeatMode::LocalVersus)
+			{
+				const int32 Count = GetNumPlayers();
+				if (Count > 2)
+				{
+					PC->ClientMatchClosed(TEXT("This private match already has two players."));
+				}
+				else
+				{
+					PC->AssignMatchSeat(Count <= 1 ? 0 : 1);
+				}
+			}
+		}
+	}
 	if (bAutoBuildP1Arena && !bArenaBuilt)
 	{
 		GetWorldTimerManager().SetTimer(ArenaBuildTimer, this, &AFBSparringGameMode::TryBuildArenaAndStart, 0.35f, false);
 	}
 }
 
+void AFBSparringGameMode::Logout(AController* Exiting)
+{
+	AFBSparringPlayerController* Leaving = Cast<AFBSparringPlayerController>(Exiting);
+	const bool bHostLeft = Leaving && Leaving->GetMatchSeat() == 0;
+	const bool bGuestLeft = Leaving && Leaving->GetMatchSeat() == 1;
+	EFBMatchSeatMode SeatMode = EFBMatchSeatMode::Unset;
+	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
+	{
+		SeatMode = FrontEnd->GetSeatMode();
+	}
+	Super::Logout(Exiting);
+	if (SeatMode != EFBMatchSeatMode::Online || !GetWorld())
+	{
+		return;
+	}
+	if (bGuestLeft)
+	{
+		if (AFBSparringGameState* State = GetGameState<AFBSparringGameState>())
+		{
+			State->bRedReady = false;
+			State->RedPick = FFBFighterRecord();
+			State->LobbyNotice = TEXT("Player 2 left the match.");
+			State->ForceNetUpdate();
+		}
+	}
+	if (bHostLeft)
+	{
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			if (AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get()))
+			{
+				if (Other != Leaving)
+				{
+					Other->ClientMatchClosed(TEXT("The host left. The private match is closed."));
+				}
+			}
+		}
+	}
+}
+
 void AFBSparringGameMode::RestartPlayer(AController* NewPlayer)
 {
+	if (bAwaitingFighterConfirm && NewPlayer && NewPlayer != GetWorld()->GetFirstPlayerController())
+	{
+		if (APlayerController* PC = Cast<APlayerController>(NewPlayer))
+		{
+			if (!PC->IsInState(NAME_Spectating))
+			{
+				PC->StartSpectatingOnly();
+			}
+		}
+		return;
+	}
 	const bool bSoloAi = ActivePlayMode == EFBPlayMode::VersusAI || ActivePlayMode == EFBPlayMode::Career;
 	if (bSoloAi && NewPlayer && BoutRequester.IsValid() && NewPlayer != BoutRequester.Get())
 	{
@@ -672,6 +742,34 @@ void AFBSparringGameMode::PlaceFightersForMatch()
 
 void AFBSparringGameMode::ApplyPendingBuilds()
 {
+	if (ActivePlayMode == EFBPlayMode::Multiplayer)
+	{
+		UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance());
+		if (!FrontEnd || !FrontEnd->HasPendingBout())
+		{
+			return;
+		}
+		TArray<AFBBoxerCharacter*> Humans;
+		for (TActorIterator<AFBBoxerCharacter> It(GetWorld()); It; ++It)
+		{
+			if (*It && It->IsPlayerControlled())
+			{
+				Humans.Add(*It);
+			}
+		}
+		FString Why;
+		if (Humans.IsValidIndex(0))
+		{
+			Humans[0]->ApplyFighterRecord(FrontEnd->GetPendingPlayer(), Why);
+			Humans[0]->ApplyBasicSkin(EFBCornerSkin::BlueCorner);
+		}
+		if (Humans.IsValidIndex(1))
+		{
+			Humans[1]->ApplyFighterRecord(FrontEnd->GetPendingOpponent(), Why);
+			Humans[1]->ApplyBasicSkin(EFBCornerSkin::RedCorner);
+		}
+		return;
+	}
 	if (ActivePlayMode != EFBPlayMode::VersusAI && ActivePlayMode != EFBPlayMode::Career)
 	{
 		return;

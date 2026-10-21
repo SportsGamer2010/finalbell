@@ -24,4 +24,10 @@ void AFBSparringGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME(AFBSparringGameState, bCardVisible);
 	DOREPLIFETIME(AFBSparringGameState, OfficialCard);
 	DOREPLIFETIME(AFBSparringGameState, RefereeCall);
+	DOREPLIFETIME(AFBSparringGameState, LobbyProtocolSeen);
+	DOREPLIFETIME(AFBSparringGameState, BluePick);
+	DOREPLIFETIME(AFBSparringGameState, RedPick);
+	DOREPLIFETIME(AFBSparringGameState, bBlueReady);
+	DOREPLIFETIME(AFBSparringGameState, bRedReady);
+	DOREPLIFETIME(AFBSparringGameState, LobbyNotice);
 }

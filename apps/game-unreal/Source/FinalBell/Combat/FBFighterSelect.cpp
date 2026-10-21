@@ -1,4 +1,8 @@
 #include "Combat/FBSparringPlayerController.h"
+#include "Input/FBGameViewportClient.h"
+#include "Combat/FBSelectNav.h"
+#include "Network/FBPrivateRoomSubsystem.h"
+#include "Combat/FBSparringGameState.h"
 #include "Combat/FBBoxerCharacter.h"
 #include "Combat/FBFighterSave.h"
 #include "Combat/FBBoxerCustomization.h"
@@ -55,6 +59,11 @@ public:
 		LeftTitle = InLeftTitle;
 		RightTitle = InRightTitle;
 		ApplyFocus();
+	}
+
+	virtual FReply OnMouseWheel(const FGeometry& Geometry, const FPointerEvent& Event) override
+	{
+		return FReply::Handled();
 	}
 
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override
@@ -641,6 +650,44 @@ void AFBSparringPlayerController::ShowFighterSelect()
 	{
 		Draft = SelectRoster.IsValidIndex(PlayerPick) ? SelectRoster[PlayerPick] : FFBFighterRecord();
 	}
+	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
+	{
+		if (SeatMode == EFBMatchSeatMode::Unset && FrontEnd->GetSeatMode() != EFBMatchSeatMode::Unset)
+		{
+			SeatMode = FrontEnd->GetSeatMode();
+		}
+	}
+	if (SeatMode == EFBMatchSeatMode::Unset)
+	{
+		SeatMode = bCareerSelect ? EFBMatchSeatMode::VersusAI : EFBMatchSeatMode::VersusAI;
+	}
+	if (bOpening && IsSequentialSelect() && SelectStatus.IsEmpty())
+	{
+		SelectStatus = TEXT("Choose Your Fighter.");
+		ActiveSide = 0;
+	}
+	if (bOpening && SeatMode == EFBMatchSeatMode::LocalVersus && SelectStatus.IsEmpty())
+	{
+		SelectStatus = TEXT("Press Start on the second controller to join the right side.");
+	}
+	if (bOpening && SeatMode == EFBMatchSeatMode::Online)
+	{
+		if (UGameInstance* GI = GetGameInstance())
+		{
+			if (UFBPrivateRoomSubsystem* Rooms = GI->GetSubsystem<UFBPrivateRoomSubsystem>())
+			{
+				SelectStatus = FString::Printf(TEXT("Share %s. The other player pastes that address."), *Rooms->GetShareToken());
+			}
+		}
+	}
+	if (UFBGameViewportClient* Pads = GetWorld() ? Cast<UFBGameViewportClient>(GetWorld()->GetGameViewport()) : nullptr)
+	{
+		Pads->SetSelectPadMode(IsSequentialSelect(), SeatMode == EFBMatchSeatMode::LocalVersus);
+	}
+	if (SeatMode == EFBMatchSeatMode::LocalVersus)
+	{
+		EnsureSecondLocalPlayer();
+	}
 	if (bOpening)
 	{
 		SelectReveal = 0.f;
@@ -672,6 +719,10 @@ void AFBSparringPlayerController::HideFighterSelect()
 	CreatorMeasure.Reset();
 	ShutdownCreatorCamera();
 	bFighterSelectVisible = false;
+	if (UFBGameViewportClient* Pads = GetWorld() ? Cast<UFBGameViewportClient>(GetWorld()->GetGameViewport()) : nullptr)
+	{
+		Pads->SetSelectPadMode(false, false);
+	}
 	bShowMouseCursor = false;
 	if (!IsMenuTakingInput())
 	{
@@ -739,6 +790,38 @@ void AFBSparringPlayerController::ConfirmCompetitiveBout()
 	if (!SelectRoster.IsValidIndex(PlayerPick) || !SelectRoster.IsValidIndex(OpponentPick))
 	{
 		SelectStatus = TEXT("Pick two fighters.");
+		RebuildFighterSelect();
+		return;
+	}
+	if (UsesSplitSeats())
+	{
+		if (SeatMode == EFBMatchSeatMode::LocalVersus && (!bLocalSecondJoined || bSecondDeviceMissing))
+		{
+			SelectStatus = bSecondDeviceMissing
+				? TEXT("Player 2's controller disconnected. Reconnect it before the bout starts.")
+				: TEXT("Waiting for player 2. Press Start on the second controller.");
+			RebuildFighterSelect();
+			return;
+		}
+		if (MatchSeat != 0 && SeatMode == EFBMatchSeatMode::Online)
+		{
+			SelectStatus = TEXT("Waiting for the host to start.");
+			RebuildFighterSelect();
+			return;
+		}
+		if (!bLeftLocked || !bRightLocked)
+		{
+			SelectStatus = TEXT("Both fighters have to be confirmed.");
+			RebuildFighterSelect();
+			return;
+		}
+		bBoutStartPending = true;
+		ServerStartSeatedBout();
+		return;
+	}
+	if (IsSequentialSelect() && (!bLeftLocked || !bRightLocked))
+	{
+		SelectStatus = bLeftLocked ? TEXT("Choose AI Opponent.") : TEXT("Choose Your Fighter.");
 		RebuildFighterSelect();
 		return;
 	}
@@ -830,6 +913,11 @@ void AFBSparringPlayerController::ServerStartCompetitiveBout_Implementation(FFBF
 		}
 		OpponentBuild = *Found;
 	}
+	if (RequestedMode == EFBPlayMode::Multiplayer)
+	{
+		ClientBoutRefused(TEXT("Use the seated start for a two-player bout."));
+		return;
+	}
 	const EFBPlayMode StartMode = bCareer ? EFBPlayMode::Career : EFBPlayMode::VersusAI;
 	Difficulty = FFBTactical::SanitizeDifficulty(Difficulty);
 	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
@@ -886,6 +974,121 @@ void AFBSparringPlayerController::ClientBoutRefused_Implementation(const FString
 		return;
 	}
 	RebuildFighterSelect();
+}
+
+void AFBSparringPlayerController::ServerCommitFighter_Implementation(FFBFighterRecord Record)
+{
+	if (!HasAuthority() || MatchSeat < 0 || !GetWorld())
+	{
+		return;
+	}
+	AFBSparringGameState* State = GetWorld()->GetGameState<AFBSparringGameState>();
+	if (!State)
+	{
+		return;
+	}
+	Record.WeightClass = FFBFighterBalance::ClassForDivision(Record.Division);
+	Record.RulesetId = TEXT("CompetitiveFair");
+	Record.RulesetVersion = FFBFighterBalance::RulesetVersion;
+	if (MatchSeat == 0)
+	{
+		State->bBlueReady = false;
+		State->BluePick = Record;
+		State->bBlueReady = true;
+	}
+	else if (MatchSeat == 1)
+	{
+		State->bRedReady = false;
+		State->RedPick = Record;
+		State->bRedReady = true;
+	}
+	State->ForceNetUpdate();
+}
+
+void AFBSparringPlayerController::ServerClearSeat_Implementation()
+{
+	if (!HasAuthority() || !GetWorld())
+	{
+		return;
+	}
+	AFBSparringGameState* State = GetWorld()->GetGameState<AFBSparringGameState>();
+	if (!State)
+	{
+		return;
+	}
+	if (MatchSeat == 0)
+	{
+		State->bBlueReady = false;
+	}
+	else if (MatchSeat == 1)
+	{
+		State->bRedReady = false;
+	}
+	State->ForceNetUpdate();
+}
+
+void AFBSparringPlayerController::ServerStartSeatedBout_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	if (MatchSeat != 0)
+	{
+		ClientBoutRefused(TEXT("Only player 1 can start."));
+		return;
+	}
+	AFBSparringGameState* State = GetWorld() ? GetWorld()->GetGameState<AFBSparringGameState>() : nullptr;
+	AFBSparringGameMode* Mode = GetWorld() ? GetWorld()->GetAuthGameMode<AFBSparringGameMode>() : nullptr;
+	if (!State || !Mode)
+	{
+		ClientBoutRefused(TEXT("The bout could not start."));
+		return;
+	}
+	if (State->LobbyProtocolSeen != AFBSparringGameState::LobbyProtocol)
+	{
+		ClientBoutRefused(TEXT("This match is a different build. Use the same packaged game."));
+		return;
+	}
+	if (!State->bBlueReady || !State->bRedReady)
+	{
+		ClientBoutRefused(TEXT("Both fighters have to be confirmed."));
+		return;
+	}
+	if (!FFBFighterBalance::IsReady(State->BluePick.Ratings) || !FFBFighterBalance::IsReady(State->RedPick.Ratings))
+	{
+		ClientBoutRefused(TEXT("Both fighters need a build that costs exactly 600."));
+		return;
+	}
+	if (FFBFighterBalance::ClassForDivision(State->BluePick.Division) != FFBFighterBalance::ClassForDivision(State->RedPick.Division))
+	{
+		ClientBoutRefused(TEXT("Competitive fights stay inside one weight class."));
+		return;
+	}
+	if (UFBGameInstance* FrontEnd = Cast<UFBGameInstance>(GetGameInstance()))
+	{
+		FrontEnd->SetPendingBout(State->BluePick, State->RedPick, SelectDifficulty);
+	}
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UFBSessionSubsystem* Session = GI->GetSubsystem<UFBSessionSubsystem>())
+		{
+			Session->ChoosePlayMode(EFBPlayMode::Multiplayer);
+		}
+	}
+	Mode->NoteBoutRequester(this);
+	Mode->SetAwaitingFighterConfirm(false);
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* Other = It->Get();
+		if (Other && (Other->IsInState(NAME_Spectating) || Other->GetPawn() == nullptr))
+		{
+			Mode->RestartPlayer(Other);
+		}
+	}
+	Mode->ApplyPlayMode(EFBPlayMode::Multiplayer);
+	HideFighterSelect();
+	ClientBoutAccepted();
 }
 
 bool AFBSparringPlayerController::IsLegalOpponentIndex(int32 Index) const
@@ -1060,12 +1263,22 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			.ButtonStyle(&ClearButton())
 			.OnHovered_Lambda([this, FocusIndex]()
 			{
-				SelectFocus = FocusIndex;
-				PaintChrome(SelectRows, SelectFocus);
+				const int32 Side = SelectSides.IsValidIndex(FocusIndex) ? SelectSides[FocusIndex] : 0;
+				if (!CanTouchSelectSide(Side, true))
+				{
+					return;
+				}
+				RememberFocus(Side, FocusIndex);
+				PaintSelectChrome();
 			})
 			.OnClicked_Lambda([this, OnPick, FocusIndex]()
 			{
-				SelectFocus = FocusIndex;
+				const int32 Side = SelectSides.IsValidIndex(FocusIndex) ? SelectSides[FocusIndex] : 0;
+				if (!CanTouchSelectSide(Side, true))
+				{
+					return FReply::Handled();
+				}
+				RememberFocus(Side, FocusIndex);
 				OnPick();
 				return FReply::Handled();
 			})
@@ -1080,13 +1293,37 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 	{
 		AddPickRow(PlayerList, Index, !bBuilderOpen && Index == PlayerPick, [this, Index]()
 		{
+			if (!CanTouchSelectSide(0, MenuControllerId == 0 && bShowMouseCursor))
+			{
+				if (!CanTouchSelectSide(0, false))
+				{
+					return;
+				}
+			}
+			if (bLeftLocked && IsSequentialSelect())
+			{
+				return;
+			}
 			PlayerPick = Index;
 			bBuilderOpen = false;
 			if (SelectRoster.IsValidIndex(Index))
 			{
 				Draft = SelectRoster[Index];
+				if (UsesSplitSeats() || IsSequentialSelect())
+				{
+					bLeftLocked = true;
+					ServerCommitFighter(SelectRoster[Index]);
+				}
 			}
-			SelectStatus.Reset();
+			if (IsSequentialSelect())
+			{
+				ActiveSide = 1;
+				SelectStatus = TEXT("Choose AI Opponent.");
+			}
+			else
+			{
+				SelectStatus = TEXT("Player 1 confirmed.");
+			}
 			RebuildFighterSelect();
 		});
 	}
@@ -1449,12 +1686,43 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 				.ColorAndOpacity(Paper)
 			];
 		}
+		const bool bWaitingForLocalTwo = SeatMode == EFBMatchSeatMode::LocalVersus && !bLocalSecondJoined;
 		for (int32 Index : LegalOpponents)
 		{
+			if (bWaitingForLocalTwo)
+			{
+				break;
+			}
 			AddPickRow(OpponentList, Index, Index == OpponentPick, [this, Index]()
 			{
+				if (!CanTouchSelectSide(1, false) && !CanTouchSelectSide(1, true))
+				{
+					return;
+				}
+				if (IsSequentialSelect() && !bLeftLocked)
+				{
+					SelectStatus = TEXT("Choose Your Fighter.");
+					RebuildFighterSelect();
+					return;
+				}
 				OpponentPick = Index;
-				SelectStatus.Reset();
+				if (SelectRoster.IsValidIndex(Index) && (UsesSplitSeats() || IsSequentialSelect()))
+				{
+					bRightLocked = true;
+					if (UsesSplitSeats())
+					{
+						ServerCommitFighter(SelectRoster[Index]);
+					}
+				}
+				if (IsSequentialSelect())
+				{
+					ActiveSide = 2;
+					SelectStatus = TEXT("Both fighters are set.");
+				}
+				else
+				{
+					SelectStatus = SeatMode == EFBMatchSeatMode::Online ? TEXT("Player 2 confirmed.") : TEXT("Player 2 confirmed.");
+				}
 				RebuildFighterSelect();
 			});
 		}
@@ -1597,7 +1865,9 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 	LeftBody->AddSlot().AutoHeight()
 	[
 		SAssignNew(LeftTitle, STextBlock)
-		.Text(FText::FromString(TEXT("YOUR FIGHTER")))
+		.Text(FText::FromString(SeatMode == EFBMatchSeatMode::LocalVersus || SeatMode == EFBMatchSeatMode::Online
+			? TEXT("PLAYER 1")
+			: (bLeftLocked ? TEXT("YOUR FIGHTER") : TEXT("CHOOSE YOUR FIGHTER"))))
 		.Font(FBMenuArt::PosterFont(18, 50))
 		.ColorAndOpacity(Quiet)
 	];
@@ -1667,7 +1937,10 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		RightBody->AddSlot().AutoHeight()
 		[
 			SAssignNew(RightTitle, STextBlock)
-			.Text(FText::FromString(TEXT("OPPONENT")))
+			.Text(FText::FromString(
+				SeatMode == EFBMatchSeatMode::Online ? TEXT("PLAYER 2") :
+				SeatMode == EFBMatchSeatMode::LocalVersus ? TEXT("PLAYER 2") :
+				TEXT("CHOOSE AI OPPONENT")))
 			.Font(FBMenuArt::PosterFont(18, 50))
 			.ColorAndOpacity(Quiet)
 		];
@@ -1690,7 +1963,9 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		RightBody->AddSlot().AutoHeight().Padding(0.f, 10.f, 0.f, 2.f)
 		[
 			SNew(STextBlock)
-			.Text(FText::FromString(FString::Printf(TEXT("CHANGE OPPONENT   ·   %s"), *ClassBlurb(WantedClass).ToUpper())))
+			.Text(FText::FromString(SeatMode == EFBMatchSeatMode::LocalVersus && !bLocalSecondJoined
+				? FString(TEXT("PRESS START ON THE SECOND CONTROLLER"))
+				: FString::Printf(TEXT("CHANGE OPPONENT   ·   %s"), *ClassBlurb(WantedClass).ToUpper())))
 			.Font(FBMenuArt::PosterFont(11, 16))
 			.ColorAndOpacity(Accent)
 			.AutoWrapText(true)
@@ -1824,11 +2099,27 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 			Stage
 		]);
 
+	SelectSides = FocusSides;
+	auto Keep = [&](int32& Stored, int32 Side)
+	{
+		if (!SelectSides.IsValidIndex(Stored) || SelectSides[Stored] != Side)
+		{
+			const int32 First = FFBSelectNav::FirstOnSide(SelectSides, Side);
+			Stored = First == INDEX_NONE ? 0 : First;
+		}
+	};
+	Keep(LeftFocus, 0);
+	Keep(RightFocus, 1);
+	Keep(ActionFocus, 2);
+	const int32 PaintSide = UsesSplitSeats()
+		? (MatchSeat == 1 ? 1 : 0)
+		: ActiveSide;
+	SelectFocus = FocusOnSide(PaintSide);
 	if (SelectRows.Num() > 0)
 	{
 		SelectFocus = FMath::Clamp(SelectFocus, 0, SelectRows.Num() - 1);
 	}
-	PaintChrome(SelectRows, SelectFocus);
+	PaintSelectChrome();
 	Stage->Watch(&SelectFocus, FocusSides, LeftFrame, RightFrame, ActionFrame, LeftTitle, RightTitle);
 	LocalViewport()->AddViewportWidgetContent(FighterSelectWidget.ToSharedRef(), 100);
 	FocusMenuWidget(FighterSelectWidget);

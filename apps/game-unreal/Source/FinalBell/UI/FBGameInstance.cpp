@@ -62,6 +62,11 @@ void UFBGameInstance::NotifyFrontEndArrived()
 	bAwaitingFrontEnd = false;
 }
 
+void UFBGameInstance::SetSeatMode(EFBMatchSeatMode Mode)
+{
+	SeatMode = Mode;
+}
+
 void UFBGameInstance::SetOpenFighterSelect(bool bOpen)
 {
 	bOpenFighterSelect = bOpen;

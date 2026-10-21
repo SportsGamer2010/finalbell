@@ -9,6 +9,7 @@
 
 class UBorder;
 class UButton;
+class UEditableTextBox;
 class UTextBlock;
 class UWidget;
 
@@ -21,7 +22,9 @@ enum class EFBMenuScreen : uint8
 	DisplayConfirm,
 	Credits,
 	QuitConfirm,
-	Loading
+	Loading,
+	Online,
+	OnlineJoin
 };
 
 UENUM()
@@ -29,6 +32,8 @@ enum class EFBMainAction : uint8
 {
 	VersusAI,
 	Multiplayer,
+	LocalVersus,
+	Online,
 	Training,
 	Career,
 	Settings,
@@ -61,6 +66,9 @@ protected:
 
 	UFUNCTION()
 	void HandleMainClicked();
+
+	UFUNCTION()
+	void HandleOnlineClicked();
 
 	UFUNCTION()
 	void HandleMainHovered();
@@ -98,6 +106,11 @@ private:
 	void FocusButton(UButton* Button);
 	void ActivateCurrent();
 	void TravelToRing(EFBPlayMode Mode, bool bOpenFighterSelect);
+	void BuildOnlineLayer(class UOverlay* Root);
+	void RefreshOnline();
+	void HostOnline();
+	void JoinOnline();
+	void CopyShareToken();
 	void ApplySettingsDraft();
 	void KeepDisplayChanges();
 	void RevertDisplayChanges();
@@ -126,6 +139,30 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UWidget> LoadingLayer;
+
+	UPROPERTY()
+	TObjectPtr<UWidget> OnlineLayer;
+
+	UPROPERTY()
+	TObjectPtr<UTextBlock> OnlineTitle;
+
+	UPROPERTY()
+	TObjectPtr<UTextBlock> OnlineBody;
+
+	UPROPERTY()
+	TObjectPtr<UTextBlock> OnlineStatus;
+
+	UPROPERTY()
+	TObjectPtr<UEditableTextBox> JoinField;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UButton>> OnlineButtons;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UBorder>> OnlineMarkers;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UTextBlock>> OnlineLabels;
 
 	UPROPERTY()
 	TObjectPtr<UTextBlock> TitlePrompt;
@@ -216,6 +253,9 @@ private:
 	int32 DraftQuality = 3;
 	int32 BaselineQuality = 3;
 	int32 ResolutionIndex = 0;
+
+	int32 OnlineIndex = 0;
+	bool bOnlineBusy = false;
 
 	int32 ConfirmFrame = -1;
 	int32 BackFrame = -1;

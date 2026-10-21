@@ -45,10 +45,71 @@ ULocalPlayer* UFBGameViewportClient::SetupInitialLocalPlayer(FString& OutError)
 	return LocalPlayer;
 }
 
+void UFBGameViewportClient::SetSelectPadMode(bool bOneHuman, bool bTwoHumans)
+{
+	bOneHumanPads = bOneHuman;
+	bTwoHumanPads = bTwoHumans;
+	if (bTwoHumans)
+	{
+		SetForceDisableSplitscreen(true);
+	}
+}
+
 void UFBGameViewportClient::ClaimPadsForLocalPlayer()
 {
-	if (CountPieViewports() >= 2)
+	if (bOneHumanPads || CountPieViewports() >= 2)
 	{
+		return;
+	}
+	if (bTwoHumanPads)
+	{
+		UGameInstance* ActiveInstance = GetGameInstance();
+		if (!ActiveInstance || ActiveInstance->GetNumLocalPlayers() < 1)
+		{
+			return;
+		}
+		ULocalPlayer* First = ActiveInstance->GetLocalPlayerByIndex(0);
+		ULocalPlayer* Second = ActiveInstance->GetNumLocalPlayers() > 1 ? ActiveInstance->GetLocalPlayerByIndex(1) : nullptr;
+		if (!First)
+		{
+			return;
+		}
+		IPlatformInputDeviceMapper& Mapper = IPlatformInputDeviceMapper::Get();
+		const FInputDeviceId Keyboard = Mapper.GetDefaultInputDevice();
+		TArray<FInputDeviceId> Devices;
+		Mapper.GetAllConnectedInputDevices(Devices);
+		int32 Gamepad = 0;
+		for (const FInputDeviceId& Device : Devices)
+		{
+			if (!Device.IsValid() || Device == Keyboard)
+			{
+				continue;
+			}
+			ULocalPlayer* OwnerPlayer = Gamepad == 0 ? First : (Gamepad == 1 ? Second : nullptr);
+			++Gamepad;
+			if (!OwnerPlayer)
+			{
+				continue;
+			}
+			const FPlatformUserId Want = OwnerPlayer->GetPlatformUserId();
+			if (!Want.IsValid())
+			{
+				continue;
+			}
+			const FPlatformUserId Owner = Mapper.GetUserForInputDevice(Device);
+			if (Owner == Want)
+			{
+				continue;
+			}
+			if (Owner.IsValid())
+			{
+				Mapper.Internal_ChangeInputDeviceUserMapping(Device, Want, Owner);
+			}
+			else
+			{
+				Mapper.Internal_MapInputDeviceToUser(Device, Want, EInputDeviceConnectionState::Connected);
+			}
+		}
 		return;
 	}
 	ULocalPlayer* LocalPlayer = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr;
