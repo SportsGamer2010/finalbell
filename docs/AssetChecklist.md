@@ -7,7 +7,7 @@ Status key: Missing / Placeholder / In-editor / Verified
 | Ring map `Content/Maps/Ring_P1` | Optional | A | Runtime auto-arena on `/Engine/Maps/Entry` via `UFBP1ArenaBootstrap`. Optional save: `scripts/create_ring_map.py` |
 | Placeholder fighter mesh/skel | In-editor | A | Epic SKM_Manny/Quinn_Simple + ABP_Unarmed loaded from Content/Mannequins; primitive body hidden when mannequin loads |
 | Head/body/guard volumes | Missing | A | Required before marking contact Verified |
-| Glove sockets + punch anims | Placeholder | A | Gloves attach to hand_l/hand_r; punch/guard still procedural offsets (not full punch anims yet) |
+| Glove sockets + punch anims | Placeholder | A | Gloves attach to hand_l/hand_r. Hooks are a posed prototype until a lead-hook and a rear-hook Animation Sequence are imported. Jab, cross, and uppercut stay procedural too. |
 | Enhanced Input IMC + actions | Runtime C++ | A | `UFBRuntimeInputLibrary` builds IMC in memory (WASD/mouse + gamepad) |
 | Broadcast camera BP defaults | Auto-spawned | A | Spawned by P1 arena bootstrap |
 | Facial morph targets (L/R brow/eye/cheek, nose, mouth) | Missing | A | P2 spike FB-009 |

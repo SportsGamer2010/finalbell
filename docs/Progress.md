@@ -1,5 +1,15 @@
 # Final Bell — Progress Log
 
+## 2026-10-21 — Prototype stationary hooks
+
+Lead and rear hooks still use the posed mannequin. There is no hook Animation Sequence, FBX, or Control Rig clip in the project, so this is not a captured punch and it has not been reviewed in play.
+
+The hook eases out of the guard, accelerates through the strike, and returns slower. Hips, torso, the punching foot, and the glove share that same curve. The other glove stays at the cheek. The capsule facing lock is unchanged, so the body turn is not added again as actor yaw. Walk speed drops while the hook is loading or striking. The server sweeps the glove along that arc, in four steps, and still allows one damage or block event per target. A slip or a step outside the arc can miss. Jab, cross, and uppercut timing is unchanged.
+
+Tune the prototype on the boxer: Hook Glove Radius, Hook Lead Yaw Degrees, Hook Rear Yaw Degrees, Hook Foot Pivot Degrees, Hook Move Scale, Hook Strike Interp, Hook Return Interp. In a development build, `fb.HookPath 1` draws the arc. `slomo 0.25` is the engine slow-motion command.
+
+`Build.bat FinalBellEditor Win64 Development` finished with `Result: Succeeded` (about 37s). Play in the editor was not run. The hook was not reviewed on the fighter, so it is not called realistic.
+
 ## 2026-10-21 — Create-a-Boxer prototype
 
 The create screen now has a 3D preview. While Create a Fighter is open, the left side of the screen is clear and the ringside camera orbits that pawn. Drag rotates, the wheel zooms, and Zoom in / Zoom out are on the pad list. Body and face controls are sliders and update the pawn without rebuilding the menu. Save and load still use `FBFighterRoster` (ten created fighters). Reset look and Randomize are on that screen.

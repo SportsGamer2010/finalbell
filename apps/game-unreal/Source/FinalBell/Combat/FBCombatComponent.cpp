@@ -76,6 +76,7 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 			{
 				ActiveWindowStartTime = ServerClock();
 				bHasGloveSample = false;
+				GloveSampleAlpha = 0.f;
 				SetPhase(EFBAttackPhase::Active, ActiveWindowSeconds * ActiveTimeScale);
 				bResolvedThisAttack = false;
 			}
@@ -203,6 +204,7 @@ void UFBCombatComponent::BeginAttack(EFBAttackId Attack, AActor* Opponent, bool 
 	bResolvedThisAttack = false;
 	DamagedDefendersThisAttack.Reset();
 	bHasGloveSample = false;
+	GloveSampleAlpha = 0.f;
 	const float Cost = CostFor(Attack, bPowerShot);
 	bActiveTiredShot = BurstEnergy < Cost;
 	// A tired jab stays above empty so it does not start the count. A shot that fits can still spend the tank out.
@@ -256,6 +258,7 @@ void UFBCombatComponent::AbortAttack()
 	bResolvedThisAttack = true;
 	PendingOpponent = nullptr;
 	bHasGloveSample = false;
+	GloveSampleAlpha = 0.f;
 	ClearBufferedAttack();
 	SetPhase(EFBAttackPhase::Idle, 0.f);
 	ApplyDesiredDefense();
@@ -552,23 +555,47 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 
 	if (AFBHeavyBag* Bag = Cast<AFBHeavyBag>(Opponent))
 	{
+		const bool bHookShot = ActiveAttack == EFBAttackId::LeadHook || ActiveAttack == EFBAttackId::RearHook;
 		const float Duration = FMath::Max(0.01f, ActiveWindowSeconds * ActiveTimeScale);
-		const float Alpha = FMath::Clamp(1.f - (PhaseTimeRemaining / Duration), 0.f, 1.f);
-		const FVector PunchCenter = AttackingBoxer
-			? AttackingBoxer->GetGlovePoint(ActiveAttack, Alpha)
-			: OwnerActor->GetActorLocation();
-		const FVector PunchFrom = bHasGloveSample
-			? GloveSample
-			: (AttackingBoxer ? AttackingBoxer->GetGlovePoint(ActiveAttack, FMath::Max(0.f, Alpha - 0.05f)) : PunchCenter);
-		GloveSample = PunchCenter;
-		bHasGloveSample = true;
+		const float WindowAlpha = FMath::Clamp(1.f - (PhaseTimeRemaining / Duration), 0.f, 1.f);
+		const float Alpha = (bHookShot && AttackingBoxer) ? AttackingBoxer->GetHookStrikeAlpha() : WindowAlpha;
 		const float PunchRadius = AttackingBoxer
 			? AttackingBoxer->GetPunchVolumeRadius(ActiveAttack)
 			: 40.f;
-		const FVector PunchMid = (PunchFrom + PunchCenter) * 0.5f;
-		if (!Bag->OverlapsPunch(PunchCenter, PunchRadius)
-			&& !Bag->OverlapsPunch(PunchFrom, PunchRadius)
-			&& !Bag->OverlapsPunch(PunchMid, PunchRadius))
+		FVector PunchCenter = OwnerActor->GetActorLocation();
+		bool bBagHit = false;
+		if (bHookShot && AttackingBoxer)
+		{
+			const float FromAlpha = bHasGloveSample ? GloveSampleAlpha : 0.f;
+			for (int32 Step = 0; Step <= 4; ++Step)
+			{
+				const float Sample = FMath::Lerp(FromAlpha, Alpha, Step / 4.f);
+				PunchCenter = AttackingBoxer->GetGlovePoint(ActiveAttack, Sample);
+				if (Bag->OverlapsPunch(PunchCenter, PunchRadius))
+				{
+					bBagHit = true;
+					break;
+				}
+			}
+			PunchCenter = bBagHit ? PunchCenter : AttackingBoxer->GetGlovePoint(ActiveAttack, Alpha);
+		}
+		else
+		{
+			PunchCenter = AttackingBoxer
+				? AttackingBoxer->GetGlovePoint(ActiveAttack, Alpha)
+				: OwnerActor->GetActorLocation();
+			const FVector PunchFrom = bHasGloveSample
+				? GloveSample
+				: (AttackingBoxer ? AttackingBoxer->GetGlovePoint(ActiveAttack, FMath::Max(0.f, Alpha - 0.05f)) : PunchCenter);
+			const FVector PunchMid = (PunchFrom + PunchCenter) * 0.5f;
+			bBagHit = Bag->OverlapsPunch(PunchCenter, PunchRadius)
+				|| Bag->OverlapsPunch(PunchFrom, PunchRadius)
+				|| Bag->OverlapsPunch(PunchMid, PunchRadius);
+		}
+		GloveSample = AttackingBoxer ? AttackingBoxer->GetGlovePoint(ActiveAttack, Alpha) : PunchCenter;
+		GloveSampleAlpha = Alpha;
+		bHasGloveSample = true;
+		if (!bBagHit)
 		{
 			if (!bCommitMiss)
 			{
@@ -623,22 +650,36 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 	if (AttackerBoxer)
 	{
 		const float Duration = FMath::Max(0.01f, ActiveWindowSeconds * ActiveTimeScale);
-		const float Alpha = FMath::Clamp(1.f - (PhaseTimeRemaining / Duration), 0.f, 1.f);
-		const FVector To = AttackerBoxer->GetGlovePoint(ActiveAttack, Alpha);
-		const FVector From = bHasGloveSample
+		const float WindowAlpha = FMath::Clamp(1.f - (PhaseTimeRemaining / Duration), 0.f, 1.f);
+		const float Alpha = bHook ? AttackerBoxer->GetHookStrikeAlpha() : WindowAlpha;
+		const float FromAlpha = bHasGloveSample ? GloveSampleAlpha : (bHook ? 0.f : FMath::Max(0.f, Alpha - 0.05f));
+		const int32 Steps = bHook ? 4 : 1;
+		FVector Cursor = bHasGloveSample
 			? GloveSample
-			: AttackerBoxer->GetGlovePoint(ActiveAttack, FMath::Max(0.f, Alpha - 0.05f));
-		GloveSample = To;
-		bHasGloveSample = true;
+			: AttackerBoxer->GetGlovePoint(ActiveAttack, FromAlpha);
 		const bool bGuardCounts = DefenderCombat && DefenderCombat->IsHeldDefenseOnTime(ActiveWindowStartTime);
-		bCollisionHit = AttackerBoxer->SweepGlove(
-			Defender,
-			From,
-			To,
-			AttackerBoxer->GetPunchVolumeRadius(ActiveAttack),
-			bActiveBodyShot,
-			bGuardCounts,
-			bBlockedByGuard);
+		for (int32 Step = 1; Step <= Steps && !bCollisionHit; ++Step)
+		{
+			const float Sample = FMath::Lerp(FromAlpha, Alpha, static_cast<float>(Step) / static_cast<float>(Steps));
+			const FVector Next = AttackerBoxer->GetGlovePoint(ActiveAttack, Sample);
+			bool bStepBlocked = false;
+			if (AttackerBoxer->SweepGlove(
+				Defender,
+				Cursor,
+				Next,
+				AttackerBoxer->GetPunchVolumeRadius(ActiveAttack),
+				bActiveBodyShot,
+				bGuardCounts,
+				bStepBlocked))
+			{
+				bCollisionHit = true;
+				bBlockedByGuard = bStepBlocked;
+			}
+			Cursor = Next;
+		}
+		GloveSample = AttackerBoxer->GetGlovePoint(ActiveAttack, Alpha);
+		GloveSampleAlpha = Alpha;
+		bHasGloveSample = true;
 	}
 
 	// Holding L2 is not a miss. A hook misses here only when the glove no longer

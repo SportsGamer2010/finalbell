@@ -296,6 +296,7 @@ protected:
 	TWeakObjectPtr<AActor> BufferedOpponent;
 
 	FVector GloveSample = FVector::ZeroVector;
+	float GloveSampleAlpha = 0.f;
 	bool bHasGloveSample = false;
 
 	UFUNCTION()

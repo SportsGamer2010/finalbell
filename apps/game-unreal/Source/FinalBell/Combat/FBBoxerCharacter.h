@@ -217,12 +217,18 @@ public:
 	/** Punch volume overlaps the target. Bodies also block each other via the capsule. */
 	bool DoesPunchConnect(EFBAttackId Attack, AActor* Target) const;
 
-	/** Glove sphere for this attack. The heavy bag uses the same center. The radius is unchanged. */
+	/** Glove sphere for this attack. Hooks finish on the curved glove path. Straights keep their reach. */
 	FVector GetPunchVolumeCenter(EFBAttackId Attack) const;
 	float GetPunchVolumeRadius(EFBAttackId Attack) const;
 
-	/** 0 is the hand at the start of the active window. 1 is the existing punch-sphere center. */
+	/**
+	 * World glove center. For a hook, Alpha is 0 at the guard and 1 at the committed contact.
+	 * Straights still blend from the cheek to the punch sphere.
+	 */
 	FVector GetGlovePoint(EFBAttackId Attack, float Alpha) const;
+
+	/** Prototype hook progress. 0 is the guard. 1 is the committed contact. Matches the posed glove. */
+	float GetHookStrikeAlpha() const;
 
 	/**
 	 * Sweeps the glove sphere from From to To against query volumes on Target.
@@ -280,6 +286,34 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Boxer", meta = (ClampMin = "0.0", ClampMax = "70.0"))
 	float MaxFacingOffsetDegrees = 50.f;
+
+	/**
+	 * Prototype hook. There is no hook Animation Sequence in the project.
+	 * These values pose the mannequin and size the glove sweep until a clip is assigned.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "8.0", ClampMax = "40.0"))
+	float HookGloveRadius = 22.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "70.0"))
+	float HookLeadYawDegrees = 40.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "70.0"))
+	float HookRearYawDegrees = 44.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "35.0"))
+	float HookFootPivotDegrees = 18.f;
+
+	/** Walk scale while a hook is loading or striking. Recovery uses the normal speed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HookMoveScale = 0.4f;
+
+	/** How fast the posed hook leaves the guard once the strike window opens. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "4.0", ClampMax = "40.0"))
+	float HookStrikeInterp = 26.f;
+
+	/** How fast the posed hook returns to the guard. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "2.0", ClampMax = "20.0"))
+	float HookReturnInterp = 5.5f;
 
 	/** Walk speed before stun and body damage shorten the step. The capsule size stays 34 x 90. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Damage", meta = (ClampMin = "100.0", ClampMax = "600.0"))
@@ -786,6 +820,7 @@ protected:
 	void ReportIntentResult(EFBIntentResult Result, EFBAttackId Attack) const;
 	void UpdateQueryVolumes();
 	void DrawContactDebug(const FVector& From, const FVector& To, float Radius) const;
+	void DrawHookPathDebug() const;
 	void SubmitRingAction(EFBRingAction Action);
 	void TryPrecisionPunch(bool bFromButton);
 	void TryStickPunch();
