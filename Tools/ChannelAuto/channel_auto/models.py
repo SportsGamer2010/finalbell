@@ -39,3 +39,4 @@ class ClipPlan:
     hashtags: list[str]
     player: str | None = None
     confident: bool = True
+    kicker: str = ""

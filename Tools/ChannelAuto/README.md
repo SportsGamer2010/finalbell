@@ -30,9 +30,11 @@ The first run marks videos already in the playlists as seen. Boxing videos from 
 2KCL game:
 
 - One full-game highlight, about 55 seconds
-- One reel per player
+- One highlight folder per player, under `players`, for both teams. Each reel follows that player's points, rebounds, assists, steals, blocks, and dunks when the game shows them. The centered mic is ducked. Crowd and game sound stay. No narrator.
+- One UNCS coaching film of the buckets they gave up, plus a screenshot of each of those possessions. The voice talks like a coach: get back, stay down on closeouts, and box out.
+- Three league marketing spots with no narrator: a question hook, the closing run, and a 2K Comp League bumper. On-screen type carries the post, then 2kcompleague.com.
 
-Player names come from a moments file, YouTube chapters, or the gamertag on the 2K ticker. The two videos already in these playlists have empty descriptions and no chapters, so player reels need one of the two options below. The full highlight still gets made from the loudest stretches of the game.
+Player names and stat lines are read from the 2K player card during the game. A moments file or YouTube chapters can still name a play. The full highlight is still the loudest stretches of the game, separate from the player folders.
 
 2K captions say the voice is AI-generated. Every caption credits GameAthlete.
 

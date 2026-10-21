@@ -1,3 +1,5 @@
+import re
+
 from channel_auto.models import ClipPlan, Moment
 
 AI_LINE = "Voice and commentary are AI-generated."
@@ -27,6 +29,31 @@ def _join(lines: list[str]) -> str:
 def knockout_lines(title: str) -> list[str]:
     del title
     return ["KNOCKOUT."]
+
+
+def coach_names(title: str, teams: list[str]) -> tuple[str, str]:
+    folded = title.lower()
+    if "unc" in folded or "underdog" in folded:
+        coached = "UNCS"
+    elif len(teams) >= 2:
+        coached = teams[1]
+    else:
+        coached = "Underdogs"
+    opponent = teams[0] if teams else "the opponent"
+    if opponent.lower() == "w2e":
+        opponent = "W2E"
+    return coached, opponent
+
+
+def coach_lines(team: str, opponent: str, points: int) -> list[str]:
+    return [
+        f"{team}, this is the end of the game.",
+        f"These are {points} points you gave {opponent}.",
+        "Do not watch the make. Watch who was late.",
+        "Do not send all five to the ball. Somebody stays home on the shooter.",
+        "Close out short and stay down.",
+        "Put a body on their big before you look at the ball.",
+    ]
 
 
 def league_lines(
@@ -81,6 +108,27 @@ def tiktok_caption(hook: str, hashtags: list[str], *, voice_notice: bool = True)
     return "\n\n".join(parts)
 
 
+def player_lines(name: str, moments: list) -> list[str]:
+    notes = " ".join(moment.note for moment in moments)
+    points = sum(int(value) for value in re.findall(r"\+(\d+) PTS", notes))
+    chips = []
+    if points:
+        chips.append(f"{points} PTS")
+    for label in ("REB", "AST", "STL", "BLK"):
+        count = notes.count(label)
+        if count:
+            chips.append(f"{count} {label}")
+    dunks = notes.count("DUNK")
+    if dunks:
+        chips.insert(0, f"{dunks} DUNK")
+    line = "  ".join(chips) if chips else "League highlights."
+    return [name, line, "2K Comp League."]
+
+
+def promo_lines(headline: str, matchup: str) -> list[str]:
+    return [headline, matchup, "2K Comp League."]
+
+
 def make_plan(
     *,
     slug: str,
@@ -93,6 +141,7 @@ def make_plan(
     confident: bool = True,
     hook: str | None = None,
     voice_notice: bool = True,
+    kicker: str = "",
 ) -> ClipPlan:
     shown = (hook or lines[0]).strip()
     spoken = _join(lines)
@@ -108,4 +157,5 @@ def make_plan(
         hashtags=hashtags,
         player=player,
         confident=confident,
+        kicker=kicker,
     )

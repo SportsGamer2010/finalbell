@@ -12,6 +12,12 @@ LEAGUE_NAME = "2K COMP LEAGUE"
 LEAGUE_URL = "2KCOMPLEAGUE.COM"
 BOXING_NAME = "ESPORTS BOXING LEAGUE"
 BOXING_URL = "ESPORTSBOXINGLEAGUE.COM"
+GAME_BED = (
+    "highpass=f=70,"
+    "pan=stereo|c0=c0-0.65*c1|c1=c1-0.65*c0,"
+    "volume=1.7,"
+    "acompressor=threshold=-20dB:ratio=2.5:attack=20:release=200"
+)
 
 
 def _run(command: list[str], cwd: Path | None = None) -> None:
@@ -118,20 +124,24 @@ def write_ass(path: Path, hook: str, lines: list[str], duration: float) -> None:
     path.write_text(body, encoding="utf-8")
 
 
-def _cut(source: Path, moment: Moment, dest: Path) -> None:
-    _run(
+def _cut(source: Path, moment: Moment, dest: Path, *, duck_voice: bool = False) -> None:
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{moment.start:.3f}",
+        "-to",
+        f"{moment.end:.3f}",
+        "-i",
+        str(source),
+    ]
+    if duck_voice:
+        command.extend(["-af", GAME_BED])
+    command.extend(
         [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            f"{moment.start:.3f}",
-            "-to",
-            f"{moment.end:.3f}",
-            "-i",
-            str(source),
             "-c:v",
             "libx264",
             "-preset",
@@ -149,6 +159,7 @@ def _cut(source: Path, moment: Moment, dest: Path) -> None:
             str(dest),
         ]
     )
+    _run(command)
 
 
 def _concat(parts: list[Path], dest: Path, work: Path) -> None:
@@ -333,6 +344,42 @@ def write_thumbnail(source: Path, stamp: float, hook: str, badge: str, dest: Pat
         )
 
 
+def write_coach_still(source: Path, stamp: float, label: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    filters = [
+        "scale=1920:1080:force_original_aspect_ratio=increase",
+        "crop=1920:1080",
+        "drawbox=x=0:y=0:w=1920:h=88:color=black@0.78:t=fill",
+        (
+            f"drawtext=fontfile={THUMB_FONT}:text='{_drawtext(label[:48])}'"
+            ":fontsize=40:fontcolor=white:x=40:y=22"
+        ),
+    ]
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{max(0.0, stamp):.3f}",
+            "-i",
+            str(source),
+            "-frames:v",
+            "1",
+            "-vf",
+            ",".join(filters),
+            "-q:v",
+            "2",
+            "-update",
+            "1",
+            str(dest),
+        ],
+        cwd=Path(FONTS),
+    )
+
+
 def render_clip(
     source: Path,
     moments: list[Moment],
@@ -341,6 +388,8 @@ def render_clip(
     dest: Path,
     voice: Path | None = None,
     work_dir: Path | None = None,
+    *,
+    duck_voice: bool = False,
 ) -> None:
     if not moments:
         raise ValueError("A clip needs at least one moment.")
@@ -350,7 +399,7 @@ def render_clip(
     parts: list[Path] = []
     for index, moment in enumerate(moments):
         part = work / f"part_{index:02d}.mp4"
-        _cut(source, moment, part)
+        _cut(source, moment, part, duck_voice=duck_voice)
         parts.append(part)
     joined = work / "joined.mp4"
     _concat(parts, joined, work)
@@ -408,6 +457,133 @@ def brand_short(
             str(mark),
             "-filter_complex",
             filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "0:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-movflags",
+            "+faststart",
+            str(out),
+        ],
+        cwd=Path(FONTS),
+    )
+    if temporary is not None:
+        temporary.replace(dest)
+
+
+def brand_promo(source: Path, dest: Path, headline: str, kicker: str, logo: Path | None = None) -> None:
+    mark = _logo_ready(logo or LEAGUE_LOGO)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    out = dest
+    temporary = None
+    if source.resolve() == dest.resolve():
+        temporary = dest.with_suffix(".branding.mp4")
+        out = temporary
+    duration = probe_duration(source)
+    end = max(0.0, duration - 2.3)
+    plate = (
+        "[1:v]colorkey=0x000000:0.16:0.08,scale=210:-1[lg];"
+        "[0:v]drawbox=x=28:y=36:w=700:h=128:color=black@0.72:t=fill[plate];"
+        "[plate][lg]overlay=44:48[withlogo];"
+        "[withlogo]drawtext=fontfile=arialbd.ttf:text='2K COMP LEAGUE'"
+        ":fontsize=28:fontcolor=white:x=250:y=58,"
+        "drawtext=fontfile=arialbd.ttf:text='2KCOMPLEAGUE.COM'"
+        ":fontsize=24:fontcolor=0x4DA3FF:x=250:y=108,"
+        "drawbox=x=0:y=210:w=1080:h=150:color=black@0.62:t=fill:enable='lt(t\\,2.6)',"
+        f"drawtext=fontfile=arialbd.ttf:text='{_drawtext(headline.upper())}'"
+        ":fontsize=68:fontcolor=white:borderw=6:bordercolor=black"
+        ":x=48:y=248:enable='lt(t\\,2.6)',"
+        "drawbox=x=0:y=1620:w=1080:h=300:color=black@0.88:t=fill"
+        f":enable='gte(t\\,{end:.2f})',"
+        f"drawtext=fontfile=arialbd.ttf:text='{_drawtext(kicker.upper())}'"
+        ":fontsize=52:fontcolor=0xFFE14A:x=48:y=1700"
+        f":enable='gte(t\\,{end:.2f})',"
+        "drawtext=fontfile=arialbd.ttf:text='2KCOMPLEAGUE.COM'"
+        ":fontsize=40:fontcolor=white:x=48:y=1788"
+        f":enable='gte(t\\,{end:.2f})'[v]"
+    )
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-i",
+            str(mark),
+            "-filter_complex",
+            plate,
+            "-map",
+            "[v]",
+            "-map",
+            "0:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-movflags",
+            "+faststart",
+            str(out),
+        ],
+        cwd=Path(FONTS),
+    )
+    if temporary is not None:
+        temporary.replace(dest)
+
+
+def brand_player(source: Path, dest: Path, name: str, kicker: str, logo: Path | None = None) -> None:
+    mark = _logo_ready(logo or LEAGUE_LOGO)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    out = dest
+    temporary = None
+    if source.resolve() == dest.resolve():
+        temporary = dest.with_suffix(".branding.mp4")
+        out = temporary
+    shown = _drawtext(name.upper()[:24])
+    chip = _drawtext((kicker or "2K COMP LEAGUE").upper()[:48])
+    plate = (
+        "[1:v]colorkey=0x000000:0.16:0.08,scale=148:-1[lg];"
+        "[0:v][lg]overlay=36:36[marked];"
+        "[marked]drawbox=x=0:y=1688:w=1080:h=232:color=black@0.92:t=fill,"
+        "drawbox=x=0:y=1688:w=1080:h=8:color=0xFFE14A@1.0:t=fill,"
+        f"drawtext=fontfile=arialbd.ttf:text='{shown}'"
+        ":fontsize=58:fontcolor=white:x=48:y=1724,"
+        f"drawtext=fontfile=arialbd.ttf:text='{chip}'"
+        ":fontsize=30:fontcolor=0xFFE14A:x=48:y=1804,"
+        "drawtext=fontfile=arialbd.ttf:text='2KCOMPLEAGUE.COM'"
+        ":fontsize=26:fontcolor=0x4DA3FF:x=48:y=1860[v]"
+    )
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-i",
+            str(mark),
+            "-filter_complex",
+            plate,
             "-map",
             "[v]",
             "-map",

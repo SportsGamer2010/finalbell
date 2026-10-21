@@ -2,7 +2,19 @@ from dataclasses import replace
 
 from channel_auto.models import ClipPlan, Moment, VideoMeta
 from channel_auto.parse import clamp_moment, parse_title
-from channel_auto.script import BOXING_TAGS, LEAGUE_TAGS, knockout_lines, league_lines, make_plan
+from channel_auto.players import PLAYER_REEL_KINDS, STAT_KINDS
+from channel_auto.scorebug import select_coach_film
+from channel_auto.script import (
+    BOXING_TAGS,
+    LEAGUE_TAGS,
+    coach_lines,
+    coach_names,
+    knockout_lines,
+    league_lines,
+    make_plan,
+    player_lines,
+    promo_lines,
+)
 
 
 def pack_moments(moments: list[Moment], limit: float) -> list[Moment]:
@@ -61,43 +73,124 @@ def build_league(
     names_trusted: bool,
 ) -> list[ClipPlan]:
     usable = _usable(meta, moments)
-    if not usable:
+    allowed = [moment for moment in usable if moment.kind == "allowed"]
+    highlights = [
+        moment for moment in usable if moment.kind != "allowed" and moment.kind not in STAT_KINDS
+    ]
+    stat_plays = [moment for moment in usable if moment.player and moment.kind in PLAYER_REEL_KINDS]
+    if not highlights and not allowed and not stat_plays:
         return []
     parsed = parse_title(meta.title)
     source = _source(meta)
     teams = parsed["teams"]
-    plans = [
-        make_plan(
-            slug="full",
-            kind="full",
-            lines=league_lines(teams, parsed["game_number"], None, "play"),
-            hashtags=LEAGUE_TAGS,
-            moments=pack_moments(usable, 55),
-            source_url=source,
-            confident=confident,
-        )
-    ]
-    grouped: dict[str, list[Moment]] = {}
-    for moment in usable:
-        if moment.player:
-            grouped.setdefault(moment.player, []).append(moment)
-    for player, owned in grouped.items():
-        packed = pack_moments(owned, 40)
-        if not packed:
-            continue
-        slug = "player-" + _slug(player)
+    plans = []
+    if highlights:
         plans.append(
             make_plan(
-                slug=slug,
-                kind="player",
-                lines=league_lines(teams, parsed["game_number"], player, packed[0].kind),
+                slug="full",
+                kind="full",
+                lines=league_lines(teams, parsed["game_number"], None, "play"),
                 hashtags=LEAGUE_TAGS,
+                moments=pack_moments(highlights, 55),
+                source_url=source,
+                confident=confident,
+            )
+        )
+    film = select_coach_film(allowed)
+    if film:
+        team, opponent = coach_names(meta.title, teams)
+        points = int(sum(moment.score for moment in film))
+        plans.append(
+            make_plan(
+                slug="coach",
+                kind="coach",
+                lines=coach_lines(team, opponent, points),
+                hashtags=LEAGUE_TAGS + ["#uncs", "#filmstudy"],
+                moments=film,
+                source_url=source,
+                confident=confident,
+                hook=f"{team} film vs {opponent}",
+            )
+        )
+    plans.extend(marketing_plans(meta, allowed, parsed, source, confident=confident))
+    grouped: dict[str, list[Moment]] = {}
+    for moment in stat_plays:
+        grouped.setdefault(moment.player, []).append(moment)
+    for player, owned in grouped.items():
+        packed = pack_moments(owned, 240)
+        if not packed:
+            continue
+        lines = player_lines(player, packed)
+        plans.append(
+            make_plan(
+                slug="player-" + _slug(player),
+                kind="player",
+                lines=lines,
+                hashtags=LEAGUE_TAGS + ["#2kcomp", "#playerhighlights"],
                 moments=packed,
                 source_url=source,
                 player=player,
                 confident=confident and names_trusted,
+                hook=player,
+                voice_notice=False,
+                kicker=lines[1],
             )
         )
+    return plans
+
+
+def _late_window(moment: Moment, length: float) -> Moment:
+    start = max(0.0, moment.end - length)
+    if moment.end - start < 4:
+        return moment
+    return replace(moment, start=start)
+
+
+def marketing_plans(
+    meta: VideoMeta,
+    allowed: list[Moment],
+    parsed: dict,
+    source: str,
+    *,
+    confident: bool,
+) -> list[ClipPlan]:
+    if not allowed:
+        return []
+    teams = parsed["teams"]
+    winner = teams[0].upper() if teams else "THE LEAGUE"
+    if winner == "W2E":
+        winner = "W2E"
+    underdog = teams[1].upper() if len(teams) > 1 else "THE FIELD"
+    matchup = f"{winner} OVER {underdog}."
+    game_number = parsed["game_number"]
+    game_line = f"GAME {game_number}." if game_number else "LEAGUE NIGHT."
+    threes = [moment for moment in allowed if moment.score >= 3]
+    featured = _late_window((threes or allowed)[-1], 8)
+    brand_moment = _late_window(threes[-2] if len(threes) > 1 else featured, 9)
+    run = [_late_window(moment, 6) for moment in allowed[-4:]]
+    tags = LEAGUE_TAGS + ["#2kcomp", "#leaguepass"]
+    specs = [
+        ("promo-hook", "WHO GOT HIM?" if threes else "AT THE RIM.", [featured], game_line),
+        ("promo-run", "THEY KEPT COMING.", run, matchup),
+        ("promo-bumper", "THIS IS THE LEAGUE.", [brand_moment], "2KCOMPLEAGUE.COM"),
+    ]
+    plans = []
+    for slug, headline, moments, kicker in specs:
+        plans.append(
+            make_plan(
+                slug=slug,
+                kind="promo",
+                lines=promo_lines(headline, matchup),
+                hashtags=tags,
+                moments=moments,
+                source_url=source,
+                confident=confident,
+                hook=headline,
+                voice_notice=False,
+                kicker=kicker,
+            )
+        )
+    del meta
     return plans
 
 

@@ -8,8 +8,10 @@ from channel_auto.hud import clean_gamertag, resolve_name
 from channel_auto.models import Moment, VideoMeta
 from channel_auto.parse import parse_moment_block, parse_roster, parse_title
 from channel_auto.pipeline import build_plans
+from channel_auto.players import events_from_card
 from channel_auto.publish_youtube import privacy_for
 from channel_auto.render import thumbnail_lines
+from channel_auto.scorebug import clean_scores
 from channel_auto.script import AI_LINE, CREDIT
 from channel_auto.state import knockout_render_current, should_process
 
@@ -116,6 +118,21 @@ class PlanTests(unittest.TestCase):
         self.assertIn("full", kinds)
         players = {plan.player for plan in plans if plan.player}
         self.assertEqual(players, {"OGSportsGamer", "SmokinSpliffss"})
+        coach_meta = VideoMeta("game", "w2e over underdogs gm 2", "UCsrc", 1800)
+        mixed = [
+            Moment(10, 22, score=2, kind="play"),
+            Moment(1400, 1412, score=2, kind="allowed", note="+2 opponent 48"),
+            Moment(1520, 1532, score=3, kind="allowed", note="+3 opponent 54"),
+            Moment(1640, 1652, score=2, kind="allowed", note="+2 opponent 62"),
+        ]
+        coached = build_plans(coach_meta, mixed, "league_highlights", confident=True, names_trusted=True)
+        film = [plan for plan in coached if plan.kind == "coach"]
+        self.assertEqual(len(film), 1)
+        self.assertIn("UNCS", film[0].hook)
+        self.assertIn("W2E", film[0].spoken)
+        full = next(plan for plan in coached if plan.kind == "full")
+        self.assertTrue(all(moment.kind != "allowed" for moment in full.moments))
+        self.assertEqual(clean_scores([(1, 0), (2, 0), (3, 6), (4, 2), (5, 2)]), [(2, 0), (5, 2)])
         unnamed = build_plans(
             meta,
             [Moment(10, 22, score=2, kind="play")],
@@ -124,6 +141,46 @@ class PlanTests(unittest.TestCase):
             names_trusted=False,
         )
         self.assertEqual([plan.kind for plan in unnamed], ["full"])
+        promos = [plan for plan in coached if plan.kind == "promo"]
+        self.assertEqual(
+            [plan.slug for plan in promos],
+            ["promo-hook", "promo-run", "promo-bumper"],
+        )
+        self.assertEqual(promos[0].hook, "WHO GOT HIM?")
+        self.assertIn("W2E OVER UNDERDOGS", promos[1].kicker)
+        self.assertNotIn("Voice and commentary", promos[0].tiktok_caption)
+        named = next(plan for plan in plans if plan.player == "OGSportsGamer")
+        self.assertNotIn("Voice and commentary", named.tiktok_caption)
+
+    def test_card_stat_ticks_become_player_reels(self):
+        events = events_from_card(
+            [
+                (10, "TooBadDawg", {"pts": 8, "ast": 1}),
+                (18, "toobaddawg", {"pts": 10, "ast": 2}),
+                (19, "TooBadDawg", {"pts": 80}),
+                (30, "SplashSir", {"pts": 4}),
+            ],
+            100,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].player, "TooBadDawg")
+        self.assertIn("+2 PTS", events[0].note)
+        self.assertIn("AST", events[0].note)
+        meta = VideoMeta("game", "w2e over underdogs gm 2", "UCsrc", 1800)
+        built = build_plans(
+            meta,
+            events + [Moment(10, 22, score=2, kind="play")],
+            "league_highlights",
+            confident=True,
+            names_trusted=True,
+        )
+        full = next(plan for plan in built if plan.kind == "full")
+        self.assertTrue(all(moment.kind != "pts" for moment in full.moments))
+        player = next(plan for plan in built if plan.kind == "player")
+        self.assertEqual(player.player, "TooBadDawg")
+        self.assertIn("2 PTS", player.kicker)
+        self.assertIn("1 AST", player.kicker)
+        self.assertNotIn("Voice and commentary", player.tiktok_caption)
 
     def test_quiet_video_fallback_is_unlisted(self):
         windows = even_windows(90, 3, 12)

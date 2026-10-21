@@ -1,4 +1,5 @@
 import json
+import subprocess
 import traceback
 from dataclasses import replace
 from datetime import date
@@ -10,6 +11,8 @@ from channel_auto.hud import extract_frame, ocr_available, read_player_name
 from channel_auto.models import Moment, VideoMeta
 from channel_auto.parse import moments_from_chapters, parse_moment_block, parse_roster
 from channel_auto.plan import build_league, build_undisputed
+from channel_auto.players import scan_player_events
+from channel_auto.scorebug import scan_opponent_scores, scoring_events
 from channel_auto.publish_youtube import credentials_ready, upload_short
 from channel_auto.render import (
     BOXING_LOGO,
@@ -17,9 +20,12 @@ from channel_auto.render import (
     LEAGUE_URL,
     brand_boxing_short,
     brand_league_short,
+    brand_player,
+    brand_promo,
     render_clip,
     spoken_lines,
     stamp_league_logo,
+    write_coach_still,
     write_thumbnail,
 )
 from channel_auto.state import knockout_render_current, load_state, save_state, should_process, touch_lock
@@ -109,6 +115,10 @@ def _folder_name(title: str, video_id: str) -> str:
 
 
 def _badge(profile: str, player: str | None, kind: str) -> str:
+    if kind == "coach":
+        return "UNCS FILM"
+    if kind == "player":
+        return "2K COMP LEAGUE"
     if player:
         return "PLAYER HIGHLIGHT"
     if profile == "knockout_highlight":
@@ -125,13 +135,19 @@ def render_plans(settings: Settings, video: Path, meta: VideoMeta, profile: str,
     rendered = []
     for plan in plans:
         stem = _file_slug(meta.video_id, plan.slug)
-        dest = out_dir / f"{stem}.mp4"
+        clip_dir = out_dir
+        if plan.kind == "player" and plan.player:
+            clip_dir = out_dir / "players" / _folder_name(plan.player, plan.player)
+            dest = clip_dir / "highlight.mp4"
+        else:
+            dest = clip_dir / f"{stem}.mp4"
         thumb = dest.with_suffix(".jpg")
         scratch = settings.inbox / "work" / meta.video_id.replace("-", "") / stem
         voice_path = scratch / "voice.mp3"
         has_voice = False
-        if profile != "knockout_highlight":
+        if profile != "knockout_highlight" and plan.kind not in {"promo", "player"}:
             has_voice = synthesize(plan.spoken, voice_name, voice_path)
+        print(f"Cutting {plan.player or plan.slug}")
         render_clip(
             video,
             plan.moments,
@@ -140,16 +156,31 @@ def render_plans(settings: Settings, video: Path, meta: VideoMeta, profile: str,
             dest,
             voice_path if has_voice else None,
             work_dir=scratch,
+            duck_voice=plan.kind == "player",
         )
         best = max(plan.moments, key=lambda moment: moment.score)
         if profile == "knockout_highlight":
             stamp = min(best.end - 1.0, best.start + 14.0)
+        elif plan.kind == "promo":
+            stamp = max(0.0, best.end - 3.0)
         else:
             stamp = best.start + min(1.0, best.duration * 0.4)
         write_thumbnail(video, stamp, plan.hook, _badge(profile, plan.player, plan.kind), thumb)
         caption = plan.tiktok_caption
         description = plan.youtube_description
-        if profile == "league_highlights":
+        if plan.kind == "promo":
+            brand_promo(dest, dest, plan.hook, plan.kicker or "2KCOMPLEAGUE.COM")
+            stamp_league_logo(thumb)
+            brand_line = f"2K Comp League\n{LEAGUE_URL.lower()}"
+            caption = f"{caption}\n\n{brand_line}"
+            description = f"{description}\n\n{brand_line}"
+        elif plan.kind == "player":
+            brand_player(dest, dest, plan.player or plan.hook, plan.kicker or "2K COMP LEAGUE")
+            stamp_league_logo(thumb)
+            brand_line = f"2K Comp League\n{LEAGUE_URL.lower()}"
+            caption = f"{caption}\n\n{brand_line}"
+            description = f"{description}\n\n{brand_line}"
+        elif profile == "league_highlights":
             brand_league_short(dest, dest)
             stamp_league_logo(thumb)
             brand_line = f"2K Comp League\n{LEAGUE_URL.lower()}"
@@ -163,6 +194,13 @@ def render_plans(settings: Settings, video: Path, meta: VideoMeta, profile: str,
             description = f"{description}\n\n{brand_line}"
         (dest.with_suffix(".tiktok.txt")).write_text(caption, encoding="utf-8")
         (dest.with_suffix(".youtube.txt")).write_text(plan.title + "\n\n" + description, encoding="utf-8")
+        if plan.kind == "coach":
+            notes = [plan.spoken, ""]
+            for index, moment in enumerate(plan.moments, start=1):
+                still = out_dir / f"{stem}-still-{index:02d}.jpg"
+                write_coach_still(video, max(0.0, moment.end - 4.0), moment.note.upper(), still)
+                notes.append(f"{index}. {moment.note}  (source {moment.start:.0f}s)")
+            (out_dir / f"{stem}-notes.txt").write_text("\n".join(notes) + "\n", encoding="utf-8")
         youtube_url = ""
         if settings.upload_youtube and credentials_ready(settings):
             youtube_url = upload_short(
@@ -221,6 +259,18 @@ def process_video(settings: Settings, video_id: str, playlist_id: str, profile: 
         if profile == "league_highlights":
             moments = assign_players(video, moments, roster, work)
             names_trusted = bool(roster) and any(moment.player for moment in moments)
+    if profile == "league_highlights":
+        try:
+            moments = list(moments) + scoring_events(scan_opponent_scores(video), meta.duration)
+        except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+            print(f"Scoreboard read failed: {exc}")
+        try:
+            card_events = scan_player_events(video, meta.duration)
+            if card_events:
+                moments = list(moments) + card_events
+                names_trusted = True
+        except (OSError, subprocess.CalledProcessError, ValueError, ImportError) as exc:
+            print(f"Player card read failed: {exc}")
     plans = build_plans(meta, moments, profile, confident=confident, names_trusted=names_trusted)
     if not plans:
         if profile == "knockout_highlight":
@@ -231,9 +281,8 @@ def process_video(settings: Settings, video_id: str, playlist_id: str, profile: 
     note = ""
     if profile == "league_highlights" and not player_clips:
         note = (
-            "No per-player cuts. Add inbox/moments/"
-            + meta.video_id
-            + ".txt or install requirements-ocr.txt so the 2K gamertag can be read."
+            "No per-player cuts. The player card did not show a stat change, "
+            "or the gamertag could not be read."
         )
     manifest = {
         "video_id": meta.video_id,
@@ -293,7 +342,13 @@ def poll(settings: Settings, *, backfill: bool, force: bool = False) -> int:
             and record.get("status") in {"rendered", "uploaded"}
             and not knockout_render_current(record)
         )
-        if not should_process(record, backfill=backfill, force=force) and not stale_boxing:
+        stale_coach = (
+            profile == "league_highlights"
+            and record is not None
+            and record.get("status") in {"rendered", "uploaded"}
+            and record.get("coach") not in {"ready", "skipped"}
+        )
+        if not should_process(record, backfill=backfill, force=force) and not stale_boxing and not stale_coach:
             continue
         touch_lock(settings.lock_path)
         print(f"Clipping {entry.get('title') or video_id} from {settings.source_name}")
@@ -306,6 +361,27 @@ def poll(settings: Settings, *, backfill: bool, force: bool = False) -> int:
                 "title": manifest["title"],
                 "outputs": [clip["file"] for clip in manifest["clips"]],
                 "attempts": 0,
+                "coach": (
+                    "ready"
+                    if any(clip.get("kind") == "coach" for clip in manifest["clips"])
+                    else "skipped"
+                    if profile == "league_highlights"
+                    else ""
+                ),
+                "marketing": (
+                    "ready"
+                    if any(clip.get("kind") == "promo" for clip in manifest["clips"])
+                    else "skipped"
+                    if profile == "league_highlights"
+                    else ""
+                ),
+                "players": (
+                    "ready"
+                    if any(clip.get("kind") == "player" for clip in manifest["clips"])
+                    else "skipped"
+                    if profile == "league_highlights"
+                    else ""
+                ),
             }
             done += 1
         except Exception as exc:
