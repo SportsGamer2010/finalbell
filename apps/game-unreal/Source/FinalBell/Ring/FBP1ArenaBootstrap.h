@@ -23,9 +23,9 @@ struct FFBBagRoomLayout
 	float HangZ = 162.f;
 	float RowSpacing = 200.f;
 	float StandOff = 175.f;
-	float CameraSide = 300.f;
-	float CameraBack = 290.f;
-	float CameraHeight = 150.f;
+	float CameraSide = 460.f;
+	float CameraBack = 420.f;
+	float CameraHeight = 130.f;
 	float CameraLook = 115.f;
 };
 
@@ -54,12 +54,12 @@ public:
 
 	/**
 	 * Why: heavy bag training was standing inside the bout ring, so the bag read as part of the fight.
-	 * What: builds a bag row on the north wall of a room that shares the gym floor. One bag takes punches.
-	 * The others are visual. Does not move ring bounds or rebuild Ring_P1.
+	 * What: builds one hanging bag on the north wall of a room that shares the gym floor.
+	 * Does not move ring bounds or rebuild Ring_P1.
 	 */
 	static void EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBag);
 
-	/** Floor, bag row, stand-off, and camera distances for the training room. */
+	/** Floor, bag, stand-off, and camera distances for the training room. */
 	static FFBBagRoomLayout GetBagRoomLayout();
 
 	/** Removes the bag-room shell and its lights. Does not destroy the bout ring. */

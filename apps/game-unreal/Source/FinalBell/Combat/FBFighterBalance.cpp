@@ -283,7 +283,7 @@ FString FFBFighterBalance::AttributeEffect(EFBAttributeId Id)
 	case EFBAttributeId::PunchSpeed: return TEXT("Punches finish a little sooner. They still commit.");
 	case EFBAttributeId::Accuracy: return TEXT("A slightly wider legal stick cone before the punch starts. Not a hit chance.");
 	case EFBAttributeId::Stamina: return TEXT("A larger gas tank.");
-	case EFBAttributeId::StaminaRegen: return TEXT("Faster refill after 0.6s of not punching, guard down.");
+	case EFBAttributeId::StaminaRegen: return TEXT("Faster refill after a short pause. A high guard refills, slower than hands down.");
 	case EFBAttributeId::StaminaRecovery: return TEXT("More of the tired ceiling comes back between rounds.");
 	case EFBAttributeId::Conditioning: return TEXT("Misses add a little less long fatigue. Not a second regen stat.");
 	case EFBAttributeId::Endurance: return TEXT("Each punch costs less, down to 85% at 95.");

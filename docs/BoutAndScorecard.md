@@ -4,9 +4,9 @@ This page is the reading version of the knockdown, the clock, and the judges. Th
 
 The server owns all of it. A client can show the clock and send where the sticks are. A client cannot decide that you got up, and it cannot write the scorecard.
 
-## One three-minute bout
+## Three rounds of three minutes
 
-`RoundDurationSeconds` is 180. `TotalRounds` is 1. When that clock reaches zero and nobody has failed the count, `BuildDecisionCard` runs and the bout is over.
+`RoundDurationSeconds` is 180. `TotalRounds` is 3. `RestDurationSeconds` is 60. When a round clock reaches zero and nobody has failed the count, that round is scored and the fighters go to the corner. Head damage keeps about 68%, body damage keeps about 58%, stun clears, the guard refills, and stamina comes back to about 82% of whatever the fatigue ceiling allows. The next bell starts the following 3:00. After round 3 the summed judge cards decide the bout.
 
 Training does not run this clock and does not start knockdowns. The heavy bag stays a heavy bag.
 
@@ -44,7 +44,7 @@ On a pad, the left stick is the left circle and the right stick is the right cir
 
 ## Three judges
 
-Judges vote only when the bell rings and both fighters are still in the bout. A knockdown they beat is not a knockout. It stays on the card as one of the three pillars. A count that reaches ten is still the knockout card, and that card does not invent round scores.
+Judges score a round when that bell rings and both fighters are still in the bout. The card at the end adds those rounds. A knockdown they beat is not a knockout. It stays on that round as one of the three pillars. A count that reaches ten is still the knockout card, and that card does not invent round scores.
 
 `NoteImpact` still writes the punch-count pillar. A clean punch adds 1. A blocked punch adds 0.25. Head damage and body damage are still recorded on the attacker. The judges do not score those two pools.
 
@@ -80,7 +80,7 @@ The full line for each premade style is in `docs/CodeGuide.md`. Generalship uses
 
 The overlay is Slate, in the same black, gold, cream, blue, and red as the meters. Oswald is named in the design system and is not imported, so the engine font stands in.
 
-- Top center: a black pill, a gold bar, and the clock, labeled 3:00 BOUT.
+- Top center: a black pill, a gold bar, and the clock, labeled with the round or REST.
 - During the count: the view dims, the count is large, and the two circles sit under GET UP.
 - At the end: a centered official card. A decision lists generalship, knockdowns, and punches, then the three judges and the totals. A knockout names the winner.
 

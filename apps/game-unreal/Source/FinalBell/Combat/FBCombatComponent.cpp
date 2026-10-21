@@ -97,6 +97,7 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 				ActiveAttack = EFBAttackId::None;
 				bActiveBodyShot = false;
 				bActivePowerShot = false;
+				bActiveTiredShot = false;
 				SetPhase(EFBAttackPhase::Idle, 0.f);
 				PendingOpponent = nullptr;
 				ApplyDesiredDefense();
@@ -105,7 +106,7 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 					const FFBCombatIntent Queued = BufferedIntent;
 					AActor* QueuedOpponent = BufferedOpponent.Get();
 					ClearBufferedAttack();
-					if (BoutAllowsNewAttack() && CanAfford(Queued.Attack))
+					if (BoutAllowsNewAttack() && CanAfford(Queued.Attack, Queued.bPowerPunch))
 					{
 						bActivePrecisionCone = Queued.bPrecisionCone;
 						BeginAttack(Queued.Attack, QueuedOpponent, Queued.bBodyTarget, Queued.bPowerPunch);
@@ -116,35 +117,44 @@ void UFBCombatComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 	}
 
 	// Body damage takes the wind. Head damage does not, because that job belongs to stun.
-	float RecoveryScale = 1.f;
-	if (const AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetOwner()))
-	{
-		RecoveryScale = Boxer->GetBurstRecoveryScale();
-	}
+	const AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetOwner());
+	const float RecoveryScale = Boxer ? Boxer->GetBurstRecoveryScale() : 1.f;
 	const float RecoverableCeiling = FMath::Max(10.f, MaxBurstEnergy - Fatigue);
 	if (PunchRegenDelay > 0.f)
 	{
 		PunchRegenDelay = FMath::Max(0.f, PunchRegenDelay - DeltaTime);
 	}
-	float Regen = EnergyRecoverPerSecond;
-	if (const AFBBoxerCharacter* RegenBoxer = Cast<AFBBoxerCharacter>(GetOwner()))
+	// The count owns the tank while a fighter is down. Standing, even behind a guard, still breathes.
+	if (!Boxer || !Boxer->IsKnockedDown())
 	{
-		Regen *= RegenBoxer->GetCombatDerived().StaminaRegen;
+		float Regen = EnergyRecoverPerSecond;
+		if (Boxer)
+		{
+			Regen *= Boxer->GetCombatDerived().StaminaRegen;
+		}
+		const bool bEligible = EnergyRegenEligible(AttackPhase, GuardState, PunchRegenDelay);
+		const float Rate = StaminaRegenRate(Regen * RecoveryScale, GuardState, bEligible);
+		BurstEnergy = AdvanceRecoverableEnergy(
+			BurstEnergy,
+			RecoverableCeiling,
+			Rate,
+			DeltaTime,
+			true);
 	}
-	BurstEnergy = AdvanceRecoverableEnergy(
-		BurstEnergy,
-		RecoverableCeiling,
-		Regen * RecoveryScale,
-		DeltaTime,
-		EnergyRegenEligible(AttackPhase, GuardState, PunchRegenDelay));
 }
 
-bool UFBCombatComponent::CanAfford(EFBAttackId Attack) const
+bool UFBCombatComponent::CanAfford(EFBAttackId Attack, bool bPowerShot) const
 {
-	return BurstEnergy >= CostFor(Attack);
+	const float Cost = CostFor(Attack, bPowerShot);
+	if (BurstEnergy >= Cost)
+	{
+		return true;
+	}
+	// A gassed fighter can still jab. Power and heavier shots wait until they fit.
+	return Attack == EFBAttackId::Jab && !bPowerShot && BurstEnergy >= TiredJabFloor;
 }
 
-float UFBCombatComponent::CostFor(EFBAttackId Attack) const
+float UFBCombatComponent::CostFor(EFBAttackId Attack, bool bPowerShot) const
 {
 	float Base = 0.f;
 	switch (Attack)
@@ -157,11 +167,15 @@ float UFBCombatComponent::CostFor(EFBAttackId Attack) const
 	case EFBAttackId::RearUppercut: Base = RearUppercutCost; break;
 	default: return 0.f;
 	}
+	if (bPowerShot)
+	{
+		Base *= PowerCostMultiplier;
+	}
 	if (const AFBBoxerCharacter* Boxer = Cast<AFBBoxerCharacter>(GetOwner()))
 	{
 		Base *= Boxer->GetCombatDerived().EnduranceCost;
 	}
-	return FMath::Max(0.5f, Base);
+	return FMath::Max(0.4f, Base);
 }
 
 float UFBCombatComponent::DamageFor(EFBAttackId Attack) const
@@ -189,7 +203,11 @@ void UFBCombatComponent::BeginAttack(EFBAttackId Attack, AActor* Opponent, bool 
 	bResolvedThisAttack = false;
 	DamagedDefendersThisAttack.Reset();
 	bHasGloveSample = false;
-	BurstEnergy = FMath::Max(0.f, BurstEnergy - CostFor(Attack));
+	const float Cost = CostFor(Attack, bPowerShot);
+	bActiveTiredShot = BurstEnergy < Cost;
+	// A tired jab stays above empty so it does not start the count. A shot that fits can still spend the tank out.
+	const float Spend = bActiveTiredShot ? FMath::Min(Cost, FMath::Max(0.f, BurstEnergy - 1.f)) : Cost;
+	BurstEnergy = FMath::Max(0.f, BurstEnergy - Spend);
 	PunchRegenDelay = FFBFighterBalance::RegenDelaySeconds;
 	ActiveTimeScale = 1.f;
 	if (const AFBBoxerCharacter* SlowBoxer = Cast<AFBBoxerCharacter>(GetOwner()))
@@ -234,6 +252,7 @@ void UFBCombatComponent::AbortAttack()
 	ActiveAttackInstanceId = 0;
 	bActiveBodyShot = false;
 	bActivePowerShot = false;
+	bActiveTiredShot = false;
 	bResolvedThisAttack = true;
 	PendingOpponent = nullptr;
 	bHasGloveSample = false;
@@ -263,10 +282,11 @@ void UFBCombatComponent::RestoreBetweenRound()
 	{
 		Recovery = Boxer->GetCombatDerived().RoundRecovery;
 	}
-	const float Ceiling = FMath::Max(10.f, MaxBurstEnergy - Fatigue);
-	const float Deficit = FMath::Max(0.f, Ceiling - BurstEnergy);
-	const float Back = Deficit * FMath::Min(1.f, 0.55f * Recovery);
-	RestoreBurstEnergy(BurstEnergy + Back);
+	float Energy = BurstEnergy;
+	float NextFatigue = Fatigue;
+	ApplyBetweenRoundRest(Energy, NextFatigue, MaxBurstEnergy, Recovery);
+	Fatigue = NextFatigue;
+	RestoreBurstEnergy(Energy);
 }
 
 void UFBCombatComponent::ResetForRematch()
@@ -463,7 +483,7 @@ EFBIntentResult UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent
 		{
 			return EFBIntentResult::RejectedPhase;
 		}
-		if (!CanAfford(Intent.Attack))
+		if (!CanAfford(Intent.Attack, Intent.bPowerPunch))
 		{
 			return EFBIntentResult::RejectedEnergy;
 		}
@@ -478,7 +498,7 @@ EFBIntentResult UFBCombatComponent::ServerTryProcessIntent(const FFBCombatIntent
 		return EFBIntentResult::RejectedPhase;
 	}
 
-	if (!CanAfford(Intent.Attack))
+	if (!CanAfford(Intent.Attack, Intent.bPowerPunch))
 	{
 		return EFBIntentResult::RejectedEnergy;
 	}
@@ -500,12 +520,13 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 	const float OutputScale = AttackingBoxer ? AttackingBoxer->GetOutgoingDamageScale() : 1.f;
 	const float HandPower = AttackingBoxer ? AttackingBoxer->GetHandPower(ActiveAttack) : 1.f;
 	float Exposure = (bActivePowerShot ? 1.4f : 1.f) * (bActiveBodyShot ? 0.85f : 1.f);
-	const float ShotScale = Exposure * OutputScale * HandPower;
+	const float TiredScale = bActiveTiredShot ? TiredPunchScale : 1.f;
+	const float ShotScale = Exposure * OutputScale * HandPower * TiredScale;
 
 	FFBImpactEvent Impact;
 	Impact.AttackInstanceId = ActiveAttackInstanceId;
 	Impact.Attack = ActiveAttack;
-	Impact.AttackerStaminaCost = CostFor(ActiveAttack);
+	Impact.AttackerStaminaCost = CostFor(ActiveAttack, bActivePowerShot);
 	Impact.Region = bActiveBodyShot ? EFBHitRegion::Body : EFBHitRegion::Head;
 
 	auto Publish = [&]()
@@ -581,8 +602,6 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 	const bool bInReach = Dist <= MaxReachUU && Dist >= MinReachUU;
 	const bool bHook = ActiveAttack == EFBAttackId::LeadHook || ActiveAttack == EFBAttackId::RearHook;
 	UFBCombatComponent* DefenderCombat = Defender->GetCombatComponent();
-	const bool bWeaveHeld = DefenderCombat && DefenderCombat->GetGuardState() == EFBGuardState::Weave;
-	const bool bWeave = bWeaveHeld && DefenderCombat->IsHeldDefenseOnTime(ActiveWindowStartTime);
 	const bool bRolledUnder = bHook && DidDefenderRollUnder(OwnerActor, Defender);
 
 	if (!bInReach)
@@ -622,10 +641,10 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 			bBlockedByGuard);
 	}
 
-	// Weave ducks a hook only when the weave was already held before this glove window.
-	// A weave pressed after the window opened is late and does not slip the hook.
-	// Stepping off the punch line only counts when the punch volume no longer touches them.
-	if (bHook && (bWeave || (bRolledUnder && !bCollisionHit)))
+	// Holding L2 is not a miss. A hook misses here only when the glove no longer
+	// touches them and they stepped off the punch line. A completed planted
+	// slip, lean, or roll is checked after the sweep.
+	if (bHook && bRolledUnder && !bCollisionHit)
 	{
 		Impact.Result = EFBContactResult::Miss;
 		Impact.bSlipped = true;
@@ -636,8 +655,7 @@ void UFBCombatComponent::ResolveAgainstOpponent(AActor* Opponent, bool bCommitMi
 		}
 		Defender->GrantCreatedAngle(0.6f);
 		Publish();
-		UE_LOG(LogTemp, Log, TEXT("FinalBell slip-under hook=%d weave=%d rolled=%d"),
-			(int32)ActiveAttack, bWeave ? 1 : 0, bRolledUnder ? 1 : 0);
+		UE_LOG(LogTemp, Log, TEXT("FinalBell slip-under hook=%d rolled=1"), (int32)ActiveAttack);
 		return;
 	}
 

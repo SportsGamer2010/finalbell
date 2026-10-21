@@ -159,7 +159,9 @@ FFBRuntimeInputBundle UFBRuntimeInputLibrary::EnsureBoxerInput(UObject* Outer)
 	Bundle.MappingContext->MapKey(Bundle.RearUppercut, EKeys::Six);
 
 	// L2 and R2. A DualSense sends these as axes (see DefaultInput.ini), not as
-	// Gamepad_LeftTrigger / Gamepad_RightTrigger button events.
+	// Gamepad_LeftTrigger / Gamepad_RightTrigger button events. The digital keys
+	// stay as a fallback for devices that only click. Both paths set one hold.
+	// Trigger travel past 0.35 is the hold. Pose depth is the left stick.
 	MapAnalogTrigger(Bundle.MappingContext, Bundle.Weave, EKeys::Gamepad_LeftTriggerAxis);
 	MapAnalogTrigger(Bundle.MappingContext, Bundle.Block, EKeys::Gamepad_RightTriggerAxis);
 	Bundle.MappingContext->MapKey(Bundle.Block, EKeys::Gamepad_RightTrigger);

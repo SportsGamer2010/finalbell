@@ -65,10 +65,64 @@ public:
 		return IsComboBufferWindow(AttackPhase, PhaseTimeRemaining, ComboBufferSeconds, bHasBufferedAttack);
 	}
 
-	/** Energy returns only while idle, guard down, and the post-punch delay has run out. */
+	/**
+	 * The pause bonus starts once the punch has finished and the short delay has run out.
+	 * A high guard does not block that pause. GuardRegenScale slows it instead.
+	 * Holding a guard used to freeze the tank, so a normal round ran out of punches.
+	 */
 	static bool EnergyRegenEligible(EFBAttackPhase Phase, EFBGuardState Guard, float PunchRegenDelay)
 	{
-		return Phase == EFBAttackPhase::Idle && Guard == EFBGuardState::Open && PunchRegenDelay <= 0.f;
+		(void)Guard;
+		return Phase == EFBAttackPhase::Idle && PunchRegenDelay <= 0.f;
+	}
+
+	/** Hands down get the full pause. A held guard still refills, at this share of the bonus. */
+	static constexpr float GuardRegenFraction = 0.70f;
+
+	/** Share of the base rate that returns even during a punch, so a round of boxing does not stick at empty. */
+	static constexpr float TrickleRegenFraction = 0.62f;
+
+	/** A jab still throws at this energy. Heavier shots wait until they fit in the tank. */
+	static constexpr float TiredJabFloor = 1.5f;
+
+	/** A jab thrown below its normal cost lands lighter. It does not empty the tank. */
+	static constexpr float TiredPunchScale = 0.72f;
+
+	/** Power punches spend this much more gas than the same shot thrown normally. */
+	static constexpr float PowerCostMultiplier = 1.45f;
+
+	static float GuardRegenScale(EFBGuardState Guard)
+	{
+		return Guard == EFBGuardState::Open ? 1.f : GuardRegenFraction;
+	}
+
+	/**
+	 * Why: boxing happens behind a guard. Regen that required the hands down
+	 * emptied the tank in the first minute and then refused every punch.
+	 * What: a trickle always runs. The pause bonus adds on when eligible, slower behind a guard.
+	 */
+	static float StaminaRegenRate(float BasePerSecond, EFBGuardState Guard, bool bEligible)
+	{
+		const float Trickle = FMath::Max(0.f, BasePerSecond) * TrickleRegenFraction;
+		if (!bEligible)
+		{
+			return Trickle;
+		}
+		return Trickle + FMath::Max(0.f, BasePerSecond) * GuardRegenScale(Guard);
+	}
+
+	/**
+	 * Why: the minute between rounds has to leave enough gas to fight, without wiping fatigue.
+	 * What: cuts fatigue, then lifts energy to 82% of the new ceiling when it is below that.
+	 * A tank that is already higher stays there. The ceiling still caps it.
+	 */
+	static void ApplyBetweenRoundRest(float& Energy, float& Fatigue, float MaxEnergy, float RoundRecovery)
+	{
+		const float Cut = FMath::Clamp(0.55f * RoundRecovery, 0.f, 0.75f);
+		Fatigue = FMath::Max(0.f, Fatigue * (1.f - Cut));
+		const float Ceiling = FMath::Max(12.f, MaxEnergy - Fatigue);
+		const float Target = Ceiling * 0.82f;
+		Energy = FMath::Clamp(FMath::Max(Energy, Target), 0.f, Ceiling);
 	}
 
 	static float AdvanceRecoverableEnergy(float Energy, float Ceiling, float RegenPerSecond, float DeltaSeconds, bool bEligible)
@@ -106,10 +160,10 @@ public:
 	float MaxBurstEnergy = 100.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float JabCost = 4.f;
+	float JabCost = 2.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float CrossCost = 8.f;
+	float CrossCost = 3.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float JabDamage = 6.f;
@@ -118,16 +172,16 @@ public:
 	float CrossDamage = 12.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float LeadHookCost = 9.f;
+	float LeadHookCost = 3.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float RearHookCost = 10.f;
+	float RearHookCost = 4.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float LeadUppercutCost = 10.f;
+	float LeadUppercutCost = 3.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float RearUppercutCost = 11.f;
+	float RearUppercutCost = 4.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
 	float LeadHookDamage = 11.f;
@@ -161,10 +215,10 @@ public:
 	float ComboBufferSeconds = 0.125f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float EnergyRecoverPerSecond = 12.f;
+	float EnergyRecoverPerSecond = 8.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Combat|Tuning")
-	float FatiguePerMiss = 1.5f;
+	float FatiguePerMiss = 0.7f;
 
 	/** Pending opponent used when startup completes (authority only). */
 	TWeakObjectPtr<AActor> PendingOpponent;
@@ -205,6 +259,9 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_CombatVisual, BlueprintReadOnly, Category = "FinalBell|Combat")
 	bool bActivePowerShot = false;
+
+	/** This punch was thrown below its normal cost. It spends less and lands lighter. */
+	bool bActiveTiredShot = false;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Combat")
 	int32 LastProcessedSequence = 0;
@@ -248,8 +305,8 @@ protected:
 	void OnRep_LastImpact();
 	void AddMissFatigue(float Amount);
 
-	bool CanAfford(EFBAttackId Attack) const;
-	float CostFor(EFBAttackId Attack) const;
+	bool CanAfford(EFBAttackId Attack, bool bPowerShot = false) const;
+	float CostFor(EFBAttackId Attack, bool bPowerShot = false) const;
 	float DamageFor(EFBAttackId Attack) const;
 	void SetPhase(EFBAttackPhase NewPhase, float Duration);
 	void BeginAttack(EFBAttackId Attack, AActor* Opponent, bool bBodyShot, bool bPowerShot);

@@ -72,7 +72,7 @@ A body shot is also multiplied by 0.85 before it is applied. It deals a bit less
 
 `GetOutgoingDamageScale` is applied to the puncher, on the server, before the defender is hurt. At full body damage it removes 25% (`BodyOutputPenalty`). At full stun it removes 15% (`StunOutputPenalty`). The floor is `MinOutputScale` (0.55), so a hurt fighter can still punch. Lasting head damage is left out of this scale on purpose: the chin is the stun spike, and a high head total should not quietly shrink every punch for the rest of the bout.
 
-`GetBurstRecoveryScale` is used in `TickComponent` when burst energy refills. At 0 body damage the refill is full speed (12 energy per second while idle and unguarded). At full body damage the refill is `BodyRecoveryAtFull` (0.45), so 45% of that speed. Head damage does not change this. The gas tank and the chin are different resources.
+`GetBurstRecoveryScale` is used in `TickComponent` when burst energy refills. At 0 body damage the pause bonus is full speed (8 energy per second, plus a trickle that keeps running during a punch). A high guard still refills, at about 70% of that bonus. At full body damage the refill is `BodyRecoveryAtFull` (0.45), so 45% of that speed. Head damage does not change this. The gas tank and the chin are different resources.
 
 `GetMoveSpeedScale` shortens the step. Full stun removes 28% of walk speed. Full body damage removes 12%. The floor is 62% of `BaseWalkSpeed` (320). `ApplyConditionToMovement` writes that into `MaxWalkSpeed` on every machine, from the replicated pools. The capsule stays 34 by 90. Punch reach does not grow or shrink because someone is hurt.
 
@@ -88,7 +88,7 @@ A body shot is also multiplied by 0.85 before it is applied. It deals a bit less
 6. The impact replicates. `HandleImpactPresentation` calls `PlayHurtReaction` on the defender. The waist yaws, the chin tucks, and the line `Head  clean  12` appears.
 7. Over the next seconds the server fades stun. Energy refill is unchanged, because this one was a head shot. Walk speed dips while stun is up, then returns.
 
-A body straight does the same walk, with `Region` set to body. The amount goes into `BodyDamage`. The flinch folds the waist. Later punches from that fighter refill energy more slowly and hit a little softer until the body pool would be healed. Nothing in this pass heals between rounds yet.
+A body straight does the same walk, with `Region` set to body. The amount goes into `BodyDamage`. The flinch folds the waist. Later punches from that fighter refill energy more slowly and hit a little softer. At the bell, `RestoreForNextRound` keeps about 68% of the chin damage and about 58% of the body damage.
 
 ## Seeing the numbers
 
@@ -96,7 +96,7 @@ The corner panels are `SFBFightMeters`. They appear after you leave the mode men
 
 | Bar | Color | What the fill means |
 | --- | --- | --- |
-| STAMINA | Gold | Burst energy left. It drops when you punch and climbs back while you are idle and not guarding. Fatigue keeps it from reaching the top. |
+| STAMINA | Gold | Burst energy left. It drops when you punch and climbs back while you box, slower behind a guard. Fatigue keeps it from reaching the top. |
 | HEAD | Danger red | Chin damage, 0 to 100. |
 | BODY | Leather brown | Rib damage, 0 to 100. |
 | STUN | Pale gold | The wobble. It climbs on a hit and falls on the server. |
@@ -136,7 +136,7 @@ The waist shares are the four coefficients in `BuildWaistTwist`. Raise the `spin
 
 - It does not stop the fight at 100, and it does not roll a flash knockout.
 - It does not swell the face, open a cut, or spawn blood.
-- It does not heal the pools between rounds.
+- It heals some of the head and body pools at the bell. It does not wipe them.
 - It does not move the punch spheres onto the gloves. The spheres stay on the capsule.
 - Play in the editor was not run as part of writing this page. A compile result, when one exists, is in `docs/Progress.md`.
 

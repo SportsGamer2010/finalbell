@@ -272,6 +272,44 @@ FVector AFBHeavyBag::GetStrikeCenter() const
 	return BagMesh ? BagMesh->GetComponentLocation() : GetActorLocation();
 }
 
+FVector AFBHeavyBag::SeatGloveCenter(const FVector& GloveCenter, float GlovePadCm, const FVector& FromLocation) const
+{
+	if (!BagMesh)
+	{
+		return GloveCenter;
+	}
+
+	const FVector Center = BagMesh->GetComponentLocation();
+	const FVector Up = BagMesh->GetUpVector().GetSafeNormal();
+	if (Up.IsNearlyZero())
+	{
+		return GloveCenter;
+	}
+
+	const float HalfHeight = BodyHeightCm() * 0.5f;
+	const float Limit = BodyDiameterCm() * 0.5f + FMath::Max(0.f, GlovePadCm);
+	const float Along = FVector::DotProduct(GloveCenter - Center, Up);
+	const float ClampedAlong = FMath::Clamp(Along, -HalfHeight, HalfHeight);
+	const FVector AxisPoint = Center + Up * ClampedAlong;
+	const FVector FromAxis = GloveCenter - AxisPoint;
+	const float Dist = FromAxis.Size();
+	if (Dist >= Limit - 0.5f)
+	{
+		return GloveCenter;
+	}
+
+	FVector OutDir = FromAxis.GetSafeNormal();
+	if (OutDir.IsNearlyZero())
+	{
+		OutDir = FVector::VectorPlaneProject(FromLocation - Center, Up).GetSafeNormal();
+	}
+	if (OutDir.IsNearlyZero())
+	{
+		return GloveCenter;
+	}
+	return AxisPoint + OutDir * Limit;
+}
+
 bool AFBHeavyBag::OverlapsPunch(const FVector& PunchCenter, float PunchRadius) const
 {
 	if (!BagMesh)

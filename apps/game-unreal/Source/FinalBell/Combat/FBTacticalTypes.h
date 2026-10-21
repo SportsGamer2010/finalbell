@@ -158,7 +158,7 @@ struct FFBAIDifficultyProfile
 struct FFBPhysicalCombatValues
 {
 	float StartupSeconds = 0.08f;
-	float JabCost = 4.f;
+	float JabCost = 2.f;
 	float JabDamage = 6.f;
 	float MaxBurstEnergy = 100.f;
 	float WalkSpeed = 320.f;

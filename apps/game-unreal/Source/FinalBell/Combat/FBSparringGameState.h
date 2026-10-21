@@ -19,9 +19,19 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/** Seconds left on the 3:00 bout clock. The count pauses this. */
+	/** Seconds left on the round clock, or on the minute between rounds. The count pauses this. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Bout")
 	float BoutSecondsRemaining = 180.f;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Bout")
+	int32 CurrentRound = 0;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Bout")
+	int32 ScheduledRounds = 3;
+
+	/** True during the minute in the corner. Punches are refused. Health and stamina have already been restored. */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Bout")
+	bool bBetweenRounds = false;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Bout")
 	bool bRoundRunning = false;

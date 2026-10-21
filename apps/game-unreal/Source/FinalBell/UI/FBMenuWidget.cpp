@@ -732,7 +732,7 @@ void UFBMenuWidget::BuildMainEntries()
 		{ EFBMainAction::VersusAI, TEXT("1V1 SPARRING (AI)"), TEXT("Pick two fighters. The bout starts after that."), bTrainingAvailable },
 		{ EFBMainAction::Multiplayer, TEXT("1V1 MULTIPLAYER"), TEXT("Two players in one ring."), bTrainingAvailable },
 		{ EFBMainAction::Training, TEXT("HEAVY BAG TRAINING"), bTrainingAvailable ? TEXT("Train on the hanging bag. No bout clock and no knockdowns.") : TEXT("The training level is not available."), bTrainingAvailable },
-		{ EFBMainAction::Career, TEXT("1V1 CAREER"), TEXT("One 3:00 bout. Your created fighter against a premade in the same class. The result is saved on that fighter."), bTrainingAvailable },
+		{ EFBMainAction::Career, TEXT("1V1 CAREER"), TEXT("Three 3:00 rounds. Your created fighter against a premade in the same class. The result is saved on that fighter."), bTrainingAvailable },
 		{ EFBMainAction::Settings, TEXT("SETTINGS"), TEXT("Master volume, display, and reduced motion."), true },
 		{ EFBMainAction::Credits, TEXT("CREDITS"), TEXT("Project title, studio, and copyright."), true },
 #if PLATFORM_DESKTOP

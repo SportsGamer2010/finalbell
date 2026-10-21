@@ -18,7 +18,7 @@ enum class EFBPlayMode : uint8
 	VersusAI,
 	Multiplayer,
 	Training,
-	/** One 3:00 bout. Local record only. Not a ranked pool. */
+	/** One local bout of three 3:00 rounds. Local record only. Not a ranked pool. */
 	Career
 };
 
@@ -197,7 +197,7 @@ enum class EFBBoutResult : uint8
 	Knockout
 };
 
-/** One judge's 10-point score for the three-minute bout. */
+/** One judge's 10-point scores, added up across the scheduled rounds. */
 USTRUCT(BlueprintType)
 struct FFBJudgeRow { GENERATED_BODY()
 
@@ -213,8 +213,9 @@ struct FFBJudgeRow { GENERATED_BODY()
 
 /**
  * The card shown when the bout ends.
- * Why: a three-minute bout that nobody fails to beat the count goes to three judges.
- * A failed count is a knockout, and that card says so instead of inventing round scores.
+ * Why: three rounds that nobody fails to beat the count go to three judges.
+ * Each judge's row is the sum of their 10-point rounds. A failed count is a knockout,
+ * and that card says so instead of inventing round scores.
  */
 USTRUCT(BlueprintType)
 struct FFBOfficialCard { GENERATED_BODY()

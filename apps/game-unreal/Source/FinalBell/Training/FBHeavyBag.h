@@ -23,6 +23,7 @@ public:
 	/**
 	 * Call before FinishSpawningActor.
 	 * The active bag takes punches. A neighbor is the same leather shape with no physics.
+	 * Training spawns only the active bag.
 	 */
 	void SetBagRole(bool bInActive);
 
@@ -37,6 +38,13 @@ public:
 
 	/** True when the punch sphere overlaps the leather body. */
 	bool OverlapsPunch(const FVector& PunchCenter, float PunchRadius) const;
+
+	/**
+	 * Presentation only. If GloveCenter is inside the leather, push it out to the surface
+	 * plus GlovePadCm, back toward FromLocation. A punch that does not reach the bag is left where it is.
+	 * Does not move the punch sphere.
+	 */
+	FVector SeatGloveCenter(const FVector& GloveCenter, float GlovePadCm, const FVector& FromLocation) const;
 
 	/** Leather cylinder, centimeters. The engine cylinder mesh is 100 cm on a side before this scale. */
 	static float BodyDiameterCm() { return 46.f; }

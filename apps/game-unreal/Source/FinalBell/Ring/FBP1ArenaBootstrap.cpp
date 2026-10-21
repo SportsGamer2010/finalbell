@@ -928,9 +928,10 @@ namespace BagRoom
 	constexpr float RowSpacing = 200.f;
 	constexpr float StandOff = 175.f;
 
-	constexpr float CameraSide = 300.f;
-	constexpr float CameraBack = 290.f;
-	constexpr float CameraHeight = 150.f;
+	// Far enough back and to the side that a 198 cm fighter stays in frame, shoes to head.
+	constexpr float CameraSide = 460.f;
+	constexpr float CameraBack = 420.f;
+	constexpr float CameraHeight = 130.f;
 	constexpr float CameraLook = 115.f;
 
 	constexpr float CeilingBottomZ = FloorTopZ + CeilingClear;
@@ -1035,6 +1036,7 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 
 	bool bHasShell = false;
 	bool bHasRoomLight = false;
+	TArray<AFBHeavyBag*> Neighbors;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		if (It->ActorHasTag(BagRoom::ShellTag))
@@ -1050,6 +1052,22 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 			if (Bag->IsActiveBag())
 			{
 				OutActiveBag = Bag;
+			}
+			else
+			{
+				Neighbors.Add(Bag);
+			}
+		}
+	}
+
+	// An older session hung four visual bags beside the one that takes punches.
+	if (World->GetAuthGameMode())
+	{
+		for (AFBHeavyBag* Neighbor : Neighbors)
+		{
+			if (Neighbor)
+			{
+				Neighbor->Destroy();
 			}
 		}
 	}
@@ -1251,34 +1269,23 @@ void UFBP1ArenaBootstrap::EnsureBagRoom(UWorld* World, AFBHeavyBag*& OutActiveBa
 		return;
 	}
 
-	const float Slots[] = { -BagRoom::RowSpacing * 2.f, -BagRoom::RowSpacing, 0.f, BagRoom::RowSpacing, BagRoom::RowSpacing * 2.f };
-	for (float SlotX : Slots)
+	const FVector Hang(0.f, BagRoom::BagY, BagRoom::HangZ);
+	const FTransform Xform(FRotator::ZeroRotator, Hang);
+	AFBHeavyBag* Bag = World->SpawnActorDeferred<AFBHeavyBag>(
+		AFBHeavyBag::StaticClass(),
+		Xform,
+		nullptr,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (Bag)
 	{
-		const bool bActive = FMath::IsNearlyZero(SlotX);
-		const FVector Hang(SlotX, BagRoom::BagY, BagRoom::HangZ);
-		const FTransform Xform(FRotator::ZeroRotator, Hang);
-		AFBHeavyBag* Bag = World->SpawnActorDeferred<AFBHeavyBag>(
-			AFBHeavyBag::StaticClass(),
-			Xform,
-			nullptr,
-			nullptr,
-			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (!Bag)
-		{
-			continue;
-		}
-		Bag->SetBagRole(bActive);
-		Bag = Cast<AFBHeavyBag>(UGameplayStatics::FinishSpawningActor(Bag, Xform));
-		if (bActive)
-		{
-			OutActiveBag = Bag;
-		}
+		Bag->SetBagRole(true);
+		OutActiveBag = Cast<AFBHeavyBag>(UGameplayStatics::FinishSpawningActor(Bag, Xform));
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("FinalBell bag room floorZ=%.0f bagY=%.0f hangZ=%.0f spacing=%.0f active=%s"),
+	UE_LOG(LogTemp, Warning, TEXT("FinalBell bag room floorZ=%.0f bagY=%.0f hangZ=%.0f active=%s"),
 		BagRoom::FloorTopZ,
 		BagRoom::BagY,
 		BagRoom::HangZ,
-		BagRoom::RowSpacing,
 		OutActiveBag ? *OutActiveBag->GetName() : TEXT("none"));
 }

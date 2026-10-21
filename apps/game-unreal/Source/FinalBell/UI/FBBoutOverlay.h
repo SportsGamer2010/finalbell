@@ -54,6 +54,7 @@ private:
 	TSharedPtr<SBorder> KnockdownRoot;
 	TSharedPtr<SBorder> CardRoot;
 	TSharedPtr<class STextBlock> ClockText;
+	TSharedPtr<class STextBlock> ClockCaption;
 	TSharedPtr<class STextBlock> CountText;
 	TSharedPtr<SFBGetUpDial> LeftDial;
 	TSharedPtr<SFBGetUpDial> RightDial;

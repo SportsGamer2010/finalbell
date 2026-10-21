@@ -12,6 +12,9 @@ void AFBSparringGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AFBSparringGameState, BoutSecondsRemaining);
+	DOREPLIFETIME(AFBSparringGameState, CurrentRound);
+	DOREPLIFETIME(AFBSparringGameState, ScheduledRounds);
+	DOREPLIFETIME(AFBSparringGameState, bBetweenRounds);
 	DOREPLIFETIME(AFBSparringGameState, bRoundRunning);
 	DOREPLIFETIME(AFBSparringGameState, bKnockdown);
 	DOREPLIFETIME(AFBSparringGameState, CountRemaining);

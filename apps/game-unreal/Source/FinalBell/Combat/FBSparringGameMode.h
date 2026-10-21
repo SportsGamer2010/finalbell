@@ -134,9 +134,9 @@ public:
 	void NotifyGuardBroken();
 
 protected:
-	/** One three-minute bout. The bell sends it to the judges. */
+	/** Three three-minute rounds. The last bell sends it to the judges. */
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Bout")
-	int32 TotalRounds = 1;
+	int32 TotalRounds = 3;
 
 	UPROPERTY(EditDefaultsOnly, Category = "FinalBell|Bout")
 	float RoundDurationSeconds = 180.f;
@@ -176,6 +176,8 @@ protected:
 	FFBOfficialCard BuiltCard;
 	FFBCornerLedger BlueLedger;
 	FFBCornerLedger RedLedger;
+	int32 BoutBlueDeductions = 0;
+	int32 BoutRedDeductions = 0;
 	TWeakObjectPtr<AFBBoxerCharacter> DownedBoxer;
 	TWeakObjectPtr<AActor> RefereeActor;
 	TWeakObjectPtr<AFBBoxerCharacter> ClinchA;
@@ -200,6 +202,7 @@ protected:
 	void PushBoutState();
 	void CompleteGetUp();
 	void FinishKnockout();
+	void ScoreClosedRound();
 	void BuildDecisionCard();
 	void BuildKnockoutCard(AFBBoxerCharacter* Winner);
 	void ShowReferee(AFBBoxerCharacter* Downed);

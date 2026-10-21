@@ -22,7 +22,7 @@ Last updated: 17 October 2026 · Gate: P0 / early P1
 
 - `AFBBoxerCharacter` — stance, eight-way move input hooks, intent submission RPC
 - `UFBCombatComponent` — burst energy, fatigue ceiling, jab/cross/guard, reach check, guard intercept, attack-instance dedupe, head/body region, output scale from the puncher's condition
-- `AFBSparringGameMode` — one 3:00 bout, knockdown count, three-judge card, one-shot finalize
+- `AFBSparringGameMode` — three 3:00 rounds, a 1:00 rest, knockdown count, three-judge card, one-shot finalize
 - `AFBBroadcastCamera` — frames both fighters
 - `AFBRingBounds` — box clamp helper
 - `UFBPrivateRoomSubsystem` — room code create/join foundation + transport notes (FB-ENH-06 P1)

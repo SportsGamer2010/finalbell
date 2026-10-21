@@ -106,8 +106,8 @@ void SFBBoutOverlay::Construct(const FArguments& InArgs)
 				SNew(SVerticalBox)
 				+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
 				[
-					SNew(STextBlock)
-					.Text(FText::FromString(TEXT("3:00 BOUT")))
+					SAssignNew(ClockCaption, STextBlock)
+					.Text(FText::FromString(TEXT("ROUND 1")))
 					.ColorAndOpacity(Gold)
 					.Font(Font(11))
 					.Justification(ETextJustify::Center)
@@ -244,7 +244,7 @@ void SFBBoutOverlay::Construct(const FArguments& InArgs)
 					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)
 					[
 						SAssignNew(CardTitle, STextBlock)
-						.Text(FText::FromString(TEXT("3:00 BOUT")))
+						.Text(FText::FromString(TEXT("3 x 3:00")))
 						.ColorAndOpacity(Cream)
 						.Font(Font(22))
 					]
@@ -326,7 +326,7 @@ float SFBBoutOverlay::StickDegrees(FVector2D Stick) const
 
 void SFBBoutOverlay::Refresh(float DeltaSeconds, const AFBSparringGameState* State, FVector2D LeftStick, FVector2D RightStick, bool bClinch, float ClinchMeter, int32 ClinchTurns)
 {
-	const bool bLiveClock = State && (State->bRoundRunning || State->bKnockdown) && !State->bCardVisible;
+	const bool bLiveClock = State && (State->bRoundRunning || State->bBetweenRounds || State->bKnockdown) && !State->bCardVisible;
 	const bool bShowClock = bLiveClock || (State && !State->bCardVisible && (bClinch || !State->RefereeCall.IsEmpty()));
 	const bool bShowCount = State && State->bKnockdown && !State->bCardVisible;
 	const bool bShowCard = State && State->bCardVisible && State->OfficialCard.Result != EFBBoutResult::None;
@@ -354,9 +354,16 @@ void SFBBoutOverlay::Refresh(float DeltaSeconds, const AFBSparringGameState* Sta
 		DisplayClock = ServerClock;
 		bHaveClock = true;
 	}
-	else if (State->bRoundRunning)
+	else if (State->bRoundRunning || State->bBetweenRounds)
 	{
 		DisplayClock = FMath::Max(0.f, DisplayClock - DeltaSeconds);
+	}
+	if (ClockCaption.IsValid())
+	{
+		const FString Label = State->bBetweenRounds
+			? TEXT("REST")
+			: FString::Printf(TEXT("ROUND %d"), FMath::Max(1, State->CurrentRound));
+		ClockCaption->SetText(FText::FromString(Label));
 	}
 	if (ClockText.IsValid())
 	{
@@ -403,7 +410,7 @@ void SFBBoutOverlay::Refresh(float DeltaSeconds, const AFBSparringGameState* Sta
 	const bool bKnockout = Card.Result == EFBBoutResult::Knockout;
 	if (CardTitle.IsValid())
 	{
-		CardTitle->SetText(FText::FromString(bKnockout ? TEXT("THE COUNT REACHED TEN") : TEXT("3:00 BOUT")));
+		CardTitle->SetText(FText::FromString(bKnockout ? TEXT("THE COUNT REACHED TEN") : TEXT("3 x 3:00")));
 	}
 	if (CardDecision.IsValid())
 	{

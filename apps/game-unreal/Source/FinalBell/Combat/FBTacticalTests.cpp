@@ -167,9 +167,25 @@ bool FFBAiGuardRegenTest::RunTest(const FString& Parameters)
 	Release.Guard = EFBGuardState::Open;
 	TestTrue(TEXT("A no-attack intent can release the guard"), UFBCombatComponent::IntentUpdatesGuard(Release));
 
-	TestFalse(TEXT("High guard does not regen"), UFBCombatComponent::EnergyRegenEligible(EFBAttackPhase::Idle, EFBGuardState::High, 0.f));
-	TestFalse(TEXT("The punch delay blocks regen"), UFBCombatComponent::EnergyRegenEligible(EFBAttackPhase::Idle, EFBGuardState::Open, 0.2f));
+	TestFalse(TEXT("The punch delay blocks the pause bonus"), UFBCombatComponent::EnergyRegenEligible(EFBAttackPhase::Idle, EFBGuardState::Open, 0.2f));
+	TestTrue(TEXT("Idle and off delay can regen behind a guard"), UFBCombatComponent::EnergyRegenEligible(EFBAttackPhase::Idle, EFBGuardState::High, 0.f));
 	TestTrue(TEXT("Idle, open, and off delay can regen"), UFBCombatComponent::EnergyRegenEligible(EFBAttackPhase::Idle, EFBGuardState::Open, 0.f));
+	TestTrue(TEXT("A held guard refills slower than hands down"), UFBCombatComponent::GuardRegenScale(EFBGuardState::High) < UFBCombatComponent::GuardRegenScale(EFBGuardState::Open));
+	const float OpenRate = UFBCombatComponent::StaminaRegenRate(8.f, EFBGuardState::Open, true);
+	const float GuardRate = UFBCombatComponent::StaminaRegenRate(8.f, EFBGuardState::High, true);
+	const float BusyRate = UFBCombatComponent::StaminaRegenRate(8.f, EFBGuardState::Open, false);
+	TestTrue(TEXT("Breathing behind the guard is slower than hands down"), GuardRate < OpenRate && GuardRate > BusyRate);
+	TestTrue(TEXT("A punch in flight still returns a little air"), BusyRate > 0.5f);
+
+	float RestedEnergy = 12.f;
+	float RestedFatigue = 40.f;
+	UFBCombatComponent::ApplyBetweenRoundRest(RestedEnergy, RestedFatigue, 100.f, 1.f);
+	TestTrue(TEXT("Rest cuts fatigue"), RestedFatigue < 40.f);
+	TestTrue(TEXT("Rest puts enough gas back to box"), RestedEnergy > 50.f);
+	float FreshEnergy = 100.f;
+	float FreshFatigue = 0.f;
+	UFBCombatComponent::ApplyBetweenRoundRest(FreshEnergy, FreshFatigue, 100.f, 1.f);
+	TestTrue(TEXT("A fresh tank stays full"), FMath::IsNearlyEqual(FreshEnergy, 100.f, 0.001f));
 
 	const float Held = UFBCombatComponent::AdvanceRecoverableEnergy(10.f, 40.f, 12.f, 1.f, false);
 	TestTrue(TEXT("Ineligible time adds no energy"), FMath::IsNearlyEqual(Held, 10.f, 0.001f));

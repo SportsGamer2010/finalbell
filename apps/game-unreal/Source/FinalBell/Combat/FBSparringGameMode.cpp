@@ -289,6 +289,8 @@ void AFBSparringGameMode::ResetBoutState()
 	DownedBoxer = nullptr;
 	BlueLedger = FFBCornerLedger();
 	RedLedger = FFBCornerLedger();
+	BoutBlueDeductions = 0;
+	BoutRedDeductions = 0;
 	BuiltCard = FFBOfficialCard();
 	RefereeCall.Reset();
 	RefereeCallUntil = 0.f;
@@ -864,6 +866,8 @@ void AFBSparringGameMode::StartBout()
 	AlignSeconds = 0.f;
 	BlueLedger = FFBCornerLedger();
 	RedLedger = FFBCornerLedger();
+	BoutBlueDeductions = 0;
+	BoutRedDeductions = 0;
 	BuiltCard = FFBOfficialCard();
 	DownedBoxer = nullptr;
 	HideReferee();
@@ -873,9 +877,10 @@ void AFBSparringGameMode::StartBout()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("Final Bell: 3:00 bout started. mode=%d."), (int32)ActivePlayMode);
+		UE_LOG(LogTemp, Log, TEXT("Final Bell: %d x 3:00 bout started. mode=%d."), TotalRounds, (int32)ActivePlayMode);
 	}
 	ResetAiTactics(TEXT("Bell"));
+	SetRefereeCall(TEXT("ROUND 1"), 2.2f);
 	PushBoutState();
 }
 
@@ -951,7 +956,10 @@ void AFBSparringGameMode::Tick(float DeltaSeconds)
 	}
 	else
 	{
-		TickRingGeneralship(DeltaSeconds);
+		if (Phase == EFBBoutPhase::RoundActive)
+		{
+			TickRingGeneralship(DeltaSeconds);
+		}
 		PhaseTimeRemaining -= DeltaSeconds;
 		if (PhaseTimeRemaining <= 0.f)
 		{
@@ -970,6 +978,7 @@ void AFBSparringGameMode::AdvancePhase()
 {
 	if (Phase == EFBBoutPhase::RoundActive)
 	{
+		ScoreClosedRound();
 		if (CurrentRound >= TotalRounds)
 		{
 			SendFightersToCorners();
@@ -981,6 +990,7 @@ void AFBSparringGameMode::AdvancePhase()
 		PhaseTimeRemaining = RestDurationSeconds;
 		RestoreBetweenRounds();
 		SendFightersToCorners();
+		SetRefereeCall(TEXT("REST"), 2.4f);
 		return;
 	}
 
@@ -990,6 +1000,7 @@ void AFBSparringGameMode::AdvancePhase()
 		Phase = EFBBoutPhase::RoundActive;
 		PhaseTimeRemaining = RoundDurationSeconds;
 		SendFightersToCorners();
+		SetRefereeCall(FString::Printf(TEXT("ROUND %d"), CurrentRound), 2.2f);
 	}
 }
 
@@ -1026,6 +1037,9 @@ void AFBSparringGameMode::PushBoutState()
 		return;
 	}
 	BoutState->BoutSecondsRemaining = PhaseTimeRemaining;
+	BoutState->CurrentRound = CurrentRound;
+	BoutState->ScheduledRounds = TotalRounds;
+	BoutState->bBetweenRounds = Phase == EFBBoutPhase::BetweenRounds;
 	BoutState->bRoundRunning = Phase == EFBBoutPhase::RoundActive
 		&& !bKnockdownActive
 		&& !bResultFinalized
@@ -1243,58 +1257,99 @@ int32 AFBSparringGameMode::ScoreLoser(const FFBCornerLedger& Winner, const FFBCo
 	return 9;
 }
 
-void AFBSparringGameMode::BuildDecisionCard()
+void AFBSparringGameMode::ScoreClosedRound()
 {
-	BuiltCard = FFBOfficialCard();
-	BuiltCard.Result = EFBBoutResult::Decision;
-	BuiltCard.BlueGeneralship = BlueLedger.Generalship;
-	BuiltCard.RedGeneralship = RedLedger.Generalship;
-	BuiltCard.BlueKnockdowns = BlueLedger.Knockdowns;
-	BuiltCard.RedKnockdowns = RedLedger.Knockdowns;
-	BuiltCard.BluePunches = BlueLedger.PunchCredit;
-	BuiltCard.RedPunches = RedLedger.PunchCredit;
-	const TCHAR* Names[] = { TEXT("HARRIS"), TEXT("COLE"), TEXT("REED") };
-	int32 BlueWins = 0;
-	int32 RedWins = 0;
-	int32 Draws = 0;
+	if (BuiltCard.Judges.Num() != 3)
+	{
+		BuiltCard.Judges.Reset();
+		const TCHAR* Names[] = { TEXT("HARRIS"), TEXT("COLE"), TEXT("REED") };
+		for (int32 Index = 0; Index < 3; ++Index)
+		{
+			FFBJudgeRow Row;
+			Row.Name = Names[Index];
+			Row.BlueScore = 0;
+			Row.RedScore = 0;
+			BuiltCard.Judges.Add(Row);
+		}
+	}
+
 	for (int32 Index = 0; Index < 3; ++Index)
 	{
 		const float BluePoints = JudgePoints(BlueLedger, Index);
 		const float RedPoints = JudgePoints(RedLedger, Index);
 		const float Diff = BluePoints - RedPoints;
-		FFBJudgeRow Row;
-		Row.Name = Names[Index];
-		if (FMath::Abs(Diff) < 1.6f)
+		int32 BlueScore = 10;
+		int32 RedScore = 10;
+		if (FMath::Abs(Diff) >= 1.6f)
 		{
-			Row.BlueScore = 10;
-			Row.RedScore = 10;
+			if (Diff > 0.f)
+			{
+				RedScore = ScoreLoser(BlueLedger, RedLedger, Diff);
+			}
+			else
+			{
+				BlueScore = ScoreLoser(RedLedger, BlueLedger, -Diff);
+			}
+		}
+		BlueScore = FMath::Max(6, BlueScore - BlueLedger.PointDeductions);
+		RedScore = FMath::Max(6, RedScore - RedLedger.PointDeductions);
+		BuiltCard.Judges[Index].BlueScore += BlueScore;
+		BuiltCard.Judges[Index].RedScore += RedScore;
+	}
+
+	BuiltCard.BlueTotal = 0;
+	BuiltCard.RedTotal = 0;
+	for (const FFBJudgeRow& Row : BuiltCard.Judges)
+	{
+		BuiltCard.BlueTotal += Row.BlueScore;
+		BuiltCard.RedTotal += Row.RedScore;
+	}
+
+	BuiltCard.BlueGeneralship += BlueLedger.Generalship;
+	BuiltCard.RedGeneralship += RedLedger.Generalship;
+	BuiltCard.BlueKnockdowns += BlueLedger.Knockdowns;
+	BuiltCard.RedKnockdowns += RedLedger.Knockdowns;
+	BuiltCard.BluePunches += BlueLedger.PunchCredit;
+	BuiltCard.RedPunches += RedLedger.PunchCredit;
+	BoutBlueDeductions += BlueLedger.PointDeductions;
+	BoutRedDeductions += RedLedger.PointDeductions;
+	BlueLedger = FFBCornerLedger();
+	RedLedger = FFBCornerLedger();
+}
+
+void AFBSparringGameMode::BuildDecisionCard()
+{
+	if (BuiltCard.Judges.Num() != 3)
+	{
+		ScoreClosedRound();
+	}
+	BuiltCard.Result = EFBBoutResult::Decision;
+
+	if (BoutBlueDeductions > 0 || BoutRedDeductions > 0)
+	{
+		BuiltCard.DeductionNote = FString::Printf(
+			TEXT("DEDUCTED   BLUE -%d    RED -%d"),
+			BoutBlueDeductions,
+			BoutRedDeductions);
+	}
+
+	int32 BlueWins = 0;
+	int32 RedWins = 0;
+	int32 Draws = 0;
+	for (const FFBJudgeRow& Row : BuiltCard.Judges)
+	{
+		if (Row.BlueScore == Row.RedScore)
+		{
 			++Draws;
 		}
-		else if (Diff > 0.f)
+		else if (Row.BlueScore > Row.RedScore)
 		{
-			Row.BlueScore = 10;
-			Row.RedScore = ScoreLoser(BlueLedger, RedLedger, Diff);
 			++BlueWins;
 		}
 		else
 		{
-			Row.RedScore = 10;
-			Row.BlueScore = ScoreLoser(RedLedger, BlueLedger, -Diff);
 			++RedWins;
 		}
-		Row.BlueScore = FMath::Max(6, Row.BlueScore - BlueLedger.PointDeductions);
-		Row.RedScore = FMath::Max(6, Row.RedScore - RedLedger.PointDeductions);
-		BuiltCard.BlueTotal += Row.BlueScore;
-		BuiltCard.RedTotal += Row.RedScore;
-		BuiltCard.Judges.Add(Row);
-	}
-
-	if (BlueLedger.PointDeductions > 0 || RedLedger.PointDeductions > 0)
-	{
-		BuiltCard.DeductionNote = FString::Printf(
-			TEXT("DEDUCTED   BLUE -%d    RED -%d"),
-			BlueLedger.PointDeductions,
-			RedLedger.PointDeductions);
 	}
 
 	if (BlueWins == 3)
@@ -1499,6 +1554,7 @@ void AFBSparringGameMode::RestoreBetweenRounds()
 			continue;
 		}
 		Combat->RestoreBetweenRound();
+		Boxer->RestoreForNextRound();
 	}
 }
 
