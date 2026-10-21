@@ -60,6 +60,10 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClientMatchClosed(const FString& Why);
 
+	/** Tells this machine which fighter it owns. The listen-server host is 0. A remote player is 1. */
+	UFUNCTION(Client, Reliable)
+	void ClientAssignMatchSeat(int32 Seat);
+
 	/** Menu keys. Returns true when the key belongs to a menu, or to pause while a bout is up. */
 	bool RouteMenuKey(const FKey& Key, bool bRepeat);
 	void PollMenuStick(float DeltaTime);
@@ -85,6 +89,10 @@ protected:
 	void ShowFighterSelect();
 	void HideFighterSelect();
 	void RebuildFighterSelect();
+	void RebuildSplitSelect();
+	void MoveSplitCursor(int32 ColumnDelta, int32 RowDelta);
+	void MoveSplitFromDevice(int32 DeviceSeat, int32 ColumnDelta, int32 RowDelta);
+	void ConfirmSplitCursor();
 	void ShowPauseMenu();
 	void HidePauseMenu();
 	void ResumeFromPause();
@@ -121,6 +129,9 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void ServerCommitFighter(FFBFighterRecord Record);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetHover(int32 Index);
 
 	UFUNCTION(Server, Reliable)
 	void ServerClearSeat();

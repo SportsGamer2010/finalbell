@@ -1,5 +1,13 @@
 # Final Bell — Progress Log
 
+## 2026-10-21 — Version 0.6.5 split fighter select
+
+Local VS and online private matches show every fighter on one grid. Player 1 moves the red cursor and player 2 moves the blue cursor at the same time. Confirming a fighter marks that tile, and the other player cannot confirm the same fighter. Join Match has a white HOST ADDRESS box. The ring menu shows VERSION 0.6.5. `Build.bat FinalBell Win64 Development` finished with `Result: Succeeded`. Play was not run.
+
+## 2026-10-21 — Host is player 1, the connection is player 2
+
+The listen-server machine owns the left fighter. The machine that connects owns the right fighter, and that seat is sent to that machine directly. Player 2 confirms the right fighter. Player 1 can then start the bout. `Build.bat FinalBell Win64 Development` finished with `Result: Succeeded`. Play was not run.
+
 ## 2026-10-21 — Player 2 can confirm in a private match
 
 The guest is player 2, and that seat is assigned before login turns them into a spectator. Player 1 confirms the left fighter. Player 2 confirms the right fighter. The host starts the bout after both confirms. Play was not run.

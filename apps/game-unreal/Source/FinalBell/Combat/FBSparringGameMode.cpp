@@ -82,21 +82,40 @@ void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 			const EFBMatchSeatMode SeatMode = FrontEnd->GetSeatMode();
 			if (SeatMode == EFBMatchSeatMode::Online || SeatMode == EFBMatchSeatMode::LocalVersus)
 			{
-				// Seat is chosen before Super::PostLogin. That call turns the guest into a
-				// spectator, and GetNumPlayers then skips them, so both people were player 1.
+				// The listen-server machine is player 1. A controller that is not local on
+				// that machine is the connecting player, so it is player 2. Scanning stored
+				// seats missed the host and gave the guest player 1 as well.
 				bool bSeat0 = false;
 				bool bSeat1 = false;
-				if (UWorld* World = GetWorld())
+				if (SeatMode == EFBMatchSeatMode::LocalVersus)
 				{
-					for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+					if (UWorld* World = GetWorld())
 					{
-						const AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get());
-						if (!Other || Other == PC)
+						for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 						{
-							continue;
+							const AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get());
+							if (!Other || Other == PC)
+							{
+								continue;
+							}
+							bSeat0 |= Other->GetMatchSeat() == 0;
+							bSeat1 |= Other->GetMatchSeat() == 1;
 						}
-						bSeat0 |= Other->GetMatchSeat() == 0;
-						bSeat1 |= Other->GetMatchSeat() == 1;
+					}
+				}
+				else if (!PC->IsLocalController())
+				{
+					bSeat0 = true;
+					if (UWorld* World = GetWorld())
+					{
+						for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+						{
+							const AFBSparringPlayerController* Other = Cast<AFBSparringPlayerController>(It->Get());
+							if (Other && Other != PC && !Other->IsLocalController() && Other->GetMatchSeat() == 1)
+							{
+								bSeat1 = true;
+							}
+						}
 					}
 				}
 				const int32 Seat = FFBSelectNav::NextMatchSeat(bSeat0, bSeat1);
@@ -113,11 +132,15 @@ void AFBSparringGameMode::PostLogin(APlayerController* NewPlayer)
 		}
 	}
 	Super::PostLogin(NewPlayer);
-	if (bMatchFull)
+	if (AFBSparringPlayerController* PC = Cast<AFBSparringPlayerController>(NewPlayer))
 	{
-		if (AFBSparringPlayerController* PC = Cast<AFBSparringPlayerController>(NewPlayer))
+		if (bMatchFull)
 		{
 			PC->ClientMatchClosed(TEXT("This private match already has two players."));
+		}
+		else if (PC->GetMatchSeat() >= 0)
+		{
+			PC->ClientAssignMatchSeat(PC->GetMatchSeat());
 		}
 	}
 	if (bAutoBuildP1Arena && !bArenaBuilt)

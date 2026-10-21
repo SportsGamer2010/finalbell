@@ -29,5 +29,7 @@ void AFBSparringGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME(AFBSparringGameState, RedPick);
 	DOREPLIFETIME(AFBSparringGameState, bBlueReady);
 	DOREPLIFETIME(AFBSparringGameState, bRedReady);
+	DOREPLIFETIME(AFBSparringGameState, BlueHover);
+	DOREPLIFETIME(AFBSparringGameState, RedHover);
 	DOREPLIFETIME(AFBSparringGameState, LobbyNotice);
 }

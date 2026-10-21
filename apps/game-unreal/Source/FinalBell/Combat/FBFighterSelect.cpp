@@ -9,7 +9,9 @@
 #include "Combat/FBSparringGameMode.h"
 #include "Session/FBSessionSubsystem.h"
 #include "UI/FBGameInstance.h"
+#include "UI/FBBuildLabel.h"
 #include "UI/FBMenuArt.h"
+#include "Widgets/Layout/SUniformGridPanel.h"
 #include "UI/FBPlayerSettings.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
@@ -666,21 +668,26 @@ void AFBSparringPlayerController::ShowFighterSelect()
 		SelectStatus = TEXT("Choose Your Fighter.");
 		ActiveSide = 0;
 	}
-	if (bOpening && SeatMode == EFBMatchSeatMode::LocalVersus && SelectStatus.IsEmpty())
+	if (bOpening && UsesSplitSeats() && SelectRoster.Num() > 1)
 	{
-		SelectStatus = TEXT("Press Start on the second controller to join the right side.");
+		LeftFocus = 0;
+		RightFocus = 1;
+	}
+	if (bOpening && SeatMode == EFBMatchSeatMode::LocalVersus)
+	{
+		SelectStatus = TEXT("Both controllers move at once. Red is player 1, blue is player 2. Cross confirms.");
 	}
 	if (bOpening && SeatMode == EFBMatchSeatMode::Online)
 	{
 		if (MatchSeat == 1)
 		{
-			SelectStatus = TEXT("You are player 2. Confirm the fighter on the right.");
+			SelectStatus = TEXT("You are player 2. Move the blue cursor. Cross confirms.");
 		}
 		else if (UGameInstance* GI = GetGameInstance())
 		{
 			if (UFBPrivateRoomSubsystem* Rooms = GI->GetSubsystem<UFBPrivateRoomSubsystem>())
 			{
-				SelectStatus = FString::Printf(TEXT("You are player 1. Share %s. Confirm the fighter on the left."), *Rooms->GetShareToken());
+				SelectStatus = FString::Printf(TEXT("You are player 1. Share %s. Move the red cursor. Cross confirms."), *Rooms->GetShareToken());
 			}
 		}
 	}
@@ -994,6 +1001,14 @@ void AFBSparringPlayerController::ServerCommitFighter_Implementation(FFBFighterR
 	Record.WeightClass = FFBFighterBalance::ClassForDivision(Record.Division);
 	Record.RulesetId = TEXT("CompetitiveFair");
 	Record.RulesetVersion = FFBFighterBalance::RulesetVersion;
+	const bool bOtherReady = MatchSeat == 0 ? State->bRedReady : State->bBlueReady;
+	const FFBFighterRecord& OtherPick = MatchSeat == 0 ? State->RedPick : State->BluePick;
+	if (bOtherReady && !OtherPick.Id.IsEmpty() && OtherPick.Id == Record.Id)
+	{
+		State->LobbyNotice = TEXT("That fighter is already taken. Choose another.");
+		State->ForceNetUpdate();
+		return;
+	}
 	if (MatchSeat == 0)
 	{
 		State->bBlueReady = false;
@@ -1005,6 +1020,29 @@ void AFBSparringPlayerController::ServerCommitFighter_Implementation(FFBFighterR
 		State->bRedReady = false;
 		State->RedPick = Record;
 		State->bRedReady = true;
+	}
+	State->LobbyNotice.Reset();
+	State->ForceNetUpdate();
+}
+
+void AFBSparringPlayerController::ServerSetHover_Implementation(int32 Index)
+{
+	if (!HasAuthority() || MatchSeat < 0 || !GetWorld())
+	{
+		return;
+	}
+	AFBSparringGameState* State = GetWorld()->GetGameState<AFBSparringGameState>();
+	if (!State)
+	{
+		return;
+	}
+	if (MatchSeat == 0)
+	{
+		State->BlueHover = Index;
+	}
+	else if (MatchSeat == 1)
+	{
+		State->RedHover = Index;
 	}
 	State->ForceNetUpdate();
 }
@@ -1177,8 +1215,435 @@ void AFBSparringPlayerController::CycleOpponent()
 	OpponentPick = Legal[Slot];
 }
 
+void AFBSparringPlayerController::MoveSplitFromDevice(int32 DeviceSeat, int32 ColumnDelta, int32 RowDelta)
+{
+	MenuControllerId = DeviceSeat;
+	if (SeatMode == EFBMatchSeatMode::LocalVersus && DeviceSeat == 1)
+	{
+		NoteSecondJoined();
+	}
+	MoveSplitCursor(ColumnDelta, RowDelta);
+}
+
+void AFBSparringPlayerController::MoveSplitCursor(int32 ColumnDelta, int32 RowDelta)
+{
+	if (!UsesSplitSeats() || bBuilderOpen || SelectRoster.Num() == 0)
+	{
+		return;
+	}
+	const bool bRight = (SeatMode == EFBMatchSeatMode::Online && MatchSeat == 1)
+		|| (SeatMode == EFBMatchSeatMode::LocalVersus && MenuControllerId == 1);
+	if (SeatMode == EFBMatchSeatMode::Online && MatchSeat < 0)
+	{
+		SelectStatus = TEXT("Waiting for the server to assign your seat.");
+		return;
+	}
+	if (bRight ? bRightLocked : bLeftLocked)
+	{
+		return;
+	}
+	constexpr int32 Columns = 8;
+	int32& Cursor = bRight ? RightFocus : LeftFocus;
+	Cursor = FMath::Clamp(Cursor, 0, SelectRoster.Num() - 1);
+	const int32 Rows = FMath::Max(1, (SelectRoster.Num() + Columns - 1) / Columns);
+	int32 Column = Cursor % Columns;
+	int32 Row = Cursor / Columns;
+	if (ColumnDelta != 0)
+	{
+		Column = (Column + ColumnDelta + Columns) % Columns;
+	}
+	if (RowDelta != 0)
+	{
+		Row = (Row + RowDelta + Rows) % Rows;
+	}
+	int32 Next = Row * Columns + Column;
+	if (Next >= SelectRoster.Num())
+	{
+		Next = SelectRoster.Num() - 1;
+	}
+	Cursor = Next;
+	if (SeatMode == EFBMatchSeatMode::Online)
+	{
+		ServerSetHover(Cursor);
+	}
+	RebuildFighterSelect();
+}
+
+void AFBSparringPlayerController::ConfirmSplitCursor()
+{
+	if (!UsesSplitSeats() || bBuilderOpen || SelectRoster.Num() == 0)
+	{
+		return;
+	}
+	const bool bRight = (SeatMode == EFBMatchSeatMode::Online && MatchSeat == 1)
+		|| (SeatMode == EFBMatchSeatMode::LocalVersus && MenuControllerId == 1);
+	if (SeatMode == EFBMatchSeatMode::Online && MatchSeat < 0)
+	{
+		SelectStatus = TEXT("Waiting for the server to assign your seat.");
+		RebuildFighterSelect();
+		return;
+	}
+	const bool bLocalHost = !bRight;
+	if (bLocalHost && bLeftLocked && bRightLocked)
+	{
+		ConfirmCompetitiveBout();
+		return;
+	}
+	if (bRight ? bRightLocked : bLeftLocked)
+	{
+		return;
+	}
+	const int32 Cursor = FMath::Clamp(bRight ? RightFocus : LeftFocus, 0, SelectRoster.Num() - 1);
+	const int32 OtherCursor = bRight ? LeftFocus : RightFocus;
+	const bool bOtherLocked = bRight ? bLeftLocked : bRightLocked;
+	if (bOtherLocked && SelectRoster.IsValidIndex(OtherCursor) && SelectRoster[OtherCursor].Id == SelectRoster[Cursor].Id)
+	{
+		SelectStatus = TEXT("That fighter is already taken. Choose another.");
+		RebuildFighterSelect();
+		return;
+	}
+	if (bRight)
+	{
+		RightFocus = Cursor;
+		bRightLocked = true;
+		SelectStatus = TEXT("PLAYER 2 SELECTED");
+	}
+	else
+	{
+		LeftFocus = Cursor;
+		bLeftLocked = true;
+		SelectStatus = TEXT("PLAYER 1 SELECTED");
+	}
+	ServerCommitFighter(SelectRoster[Cursor]);
+	if (SeatMode == EFBMatchSeatMode::Online)
+	{
+		ServerSetHover(Cursor);
+	}
+	RebuildFighterSelect();
+}
+
+void AFBSparringPlayerController::RebuildSplitSelect()
+{
+	if (!GEngine || !LocalViewport())
+	{
+		return;
+	}
+	if (SelectRoster.Num() == 0)
+	{
+		LoadSelectRoster();
+	}
+	if (SelectRoster.Num() == 0)
+	{
+		return;
+	}
+	if (!SelectRoster.IsValidIndex(LeftFocus))
+	{
+		LeftFocus = 0;
+	}
+	if (!SelectRoster.IsValidIndex(RightFocus))
+	{
+		RightFocus = SelectRoster.Num() > 1 ? 1 : 0;
+	}
+	const bool bLocalRight = SeatMode == EFBMatchSeatMode::Online && MatchSeat == 1;
+	const FLinearColor Paper = FBMenuArt::Paper();
+	const FLinearColor Quiet = FBMenuArt::Quiet();
+	const FLinearColor LeftRed(0.55f, 0.10f, 0.12f, 1.f);
+	const FLinearColor RightBlue(0.10f, 0.18f, 0.48f, 1.f);
+	const FSlateBrush* White = FCoreStyle::Get().GetBrush(TEXT("WhiteBrush"));
+	static FButtonStyle ClearButton = []()
+	{
+		FButtonStyle Style;
+		const FSlateColorBrush Clear(FLinearColor::Transparent);
+		Style.SetNormal(Clear);
+		Style.SetHovered(Clear);
+		Style.SetPressed(Clear);
+		Style.SetDisabled(Clear);
+		Style.NormalPadding = FMargin(0.f);
+		Style.PressedPadding = FMargin(0.f);
+		return Style;
+	}();
+
+	auto Initials = [](const FString& Name)
+	{
+		FString Out;
+		TArray<FString> Words;
+		Name.ParseIntoArray(Words, TEXT(" "), true);
+		for (const FString& Word : Words)
+		{
+			if (!Word.IsEmpty())
+			{
+				Out.AppendChar(Word[0]);
+			}
+			if (Out.Len() >= 2)
+			{
+				break;
+			}
+		}
+		return Out.IsEmpty() ? FString(TEXT("?")) : Out.ToUpper();
+	};
+	auto Card = [&](TSharedRef<SVerticalBox> Into, const FFBFighterRecord& Fighter, const FString& CornerRole, bool bSelected, const FString& Who)
+	{
+		Into->AddSlot().AutoHeight()
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(CornerRole))
+			.Font(FBMenuArt::PosterFont(14, 80))
+			.ColorAndOpacity(Paper)
+		];
+		Into->AddSlot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(Fighter.DisplayName.IsEmpty() ? TEXT("CHOOSE A FIGHTER") : Fighter.DisplayName.ToUpper()))
+			.Font(FBMenuArt::PosterFont(32, 40))
+			.ColorAndOpacity(Paper)
+			.AutoWrapText(true)
+		];
+		Into->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(Fighter.Style.IsEmpty() ? Who : Fighter.Style.ToUpper()))
+			.Font(FBMenuArt::PosterFont(16, 40))
+			.ColorAndOpacity(Quiet)
+		];
+		if (bSelected)
+		{
+			Into->AddSlot().AutoHeight().Padding(0.f, 12.f, 0.f, 0.f)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("SELECTED")))
+				.Font(FBMenuArt::PosterFont(18, 80))
+				.ColorAndOpacity(Paper)
+			];
+		}
+	};
+
+	const FFBFighterRecord& LeftFighter = SelectRoster[LeftFocus];
+	const FFBFighterRecord& RightFighter = SelectRoster[RightFocus];
+	TSharedRef<SVerticalBox> LeftCard = SNew(SVerticalBox);
+	TSharedRef<SVerticalBox> RightCard = SNew(SVerticalBox);
+	FString LeftRole = TEXT("PLAYER 1");
+	FString RightRole = TEXT("PLAYER 2");
+	if (SeatMode == EFBMatchSeatMode::Online && MatchSeat == 0)
+	{
+		LeftRole += TEXT("  ·  YOU");
+	}
+	if (bLocalRight)
+	{
+		RightRole += TEXT("  ·  YOU");
+	}
+	Card(LeftCard, LeftFighter, LeftRole, bLeftLocked, TEXT("MOVING"));
+	Card(RightCard, RightFighter, RightRole, bRightLocked, TEXT("MOVING"));
+
+	TSharedRef<SUniformGridPanel> Grid = SNew(SUniformGridPanel).SlotPadding(FMargin(4.f));
+	constexpr int32 Columns = 8;
+	for (int32 Index = 0; Index < SelectRoster.Num(); ++Index)
+	{
+		const bool bP1 = Index == LeftFocus;
+		const bool bP2 = Index == RightFocus;
+		const bool bTakenLeft = bLeftLocked && Index == LeftFocus;
+		const bool bTakenRight = bRightLocked && Index == RightFocus;
+		FLinearColor Frame = FLinearColor(0.16f, 0.16f, 0.18f, 1.f);
+		if (bP1 && bP2)
+		{
+			Frame = FLinearColor(0.45f, 0.28f, 0.55f, 1.f);
+		}
+		else if (bP1)
+		{
+			Frame = LeftRed;
+		}
+		else if (bP2)
+		{
+			Frame = RightBlue;
+		}
+		const FString Mark = Initials(SelectRoster[Index].DisplayName);
+		Grid->AddSlot(Index % Columns, Index / Columns)
+		[
+			SNew(SButton)
+			.ButtonStyle(&ClearButton)
+			.OnClicked_Lambda([this, Index]()
+			{
+				const bool bRight = (SeatMode == EFBMatchSeatMode::Online && MatchSeat == 1)
+					|| (SeatMode == EFBMatchSeatMode::LocalVersus && MenuControllerId == 1);
+				if (SeatMode == EFBMatchSeatMode::Online && MatchSeat < 0)
+				{
+					return FReply::Handled();
+				}
+				int32& Cursor = bRight ? RightFocus : LeftFocus;
+				const bool bLocked = bRight ? bRightLocked : bLeftLocked;
+				if (bLocked)
+				{
+					if (bRight)
+					{
+						bRightLocked = false;
+					}
+					else
+					{
+						bLeftLocked = false;
+					}
+					ServerClearSeat();
+				}
+				Cursor = Index;
+				if (SeatMode == EFBMatchSeatMode::Online)
+				{
+					ServerSetHover(Index);
+				}
+				ConfirmSplitCursor();
+				return FReply::Handled();
+			})
+			[
+				SNew(SBorder)
+				.BorderImage(White)
+				.BorderBackgroundColor(Frame)
+				.Padding(FMargin(bP1 || bP2 ? 3.f : 1.f))
+				[
+					SNew(SBox)
+					.WidthOverride(96.f)
+					.HeightOverride(72.f)
+					[
+						SNew(SBorder)
+						.BorderImage(White)
+						.BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.09f, 1.f))
+						.HAlign(HAlign_Center)
+						.VAlign(VAlign_Center)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(bTakenLeft || bTakenRight ? TEXT("OK") : Mark))
+							.Font(FBMenuArt::PosterFont(18, 40))
+							.ColorAndOpacity(Paper)
+						]
+					]
+				]
+			]
+		];
+	}
+
+	TSharedRef<SHorizontalBox> BottomBar = SNew(SHorizontalBox);
+	BottomBar->AddSlot().FillWidth(1.f).VAlign(VAlign_Center)
+	[
+		SNew(STextBlock)
+		.Text(FText::FromString([&]()
+		{
+			FString Footer = TEXT("Choose a fighter");
+			if (!SelectStatus.IsEmpty())
+			{
+				Footer += TEXT("     ");
+				Footer += SelectStatus;
+			}
+			if (bLeftLocked && bRightLocked
+				&& FFBFighterBalance::ClassForDivision(LeftFighter.Division) != FFBFighterBalance::ClassForDivision(RightFighter.Division))
+			{
+				Footer += TEXT("     Same weight class required.");
+			}
+			return Footer;
+		}()))
+		.Font(FBMenuArt::PosterFont(16, 20))
+		.ColorAndOpacity(Paper)
+	];
+	if (bLeftLocked && bRightLocked && !bLocalRight)
+	{
+		BottomBar->AddSlot().AutoWidth().Padding(12.f, 0.f, 0.f, 0.f)
+		[
+			SNew(SButton)
+			.ButtonStyle(&ClearButton)
+			.OnClicked_Lambda([this]()
+			{
+				ConfirmCompetitiveBout();
+				return FReply::Handled();
+			})
+			[
+				SNew(SBorder)
+				.BorderImage(White)
+				.BorderBackgroundColor(Paper)
+				.Padding(FMargin(18.f, 8.f))
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("FIGHT")))
+					.Font(FBMenuArt::PosterFont(18, 60))
+					.ColorAndOpacity(FLinearColor(0.05f, 0.05f, 0.05f, 1.f))
+				]
+			]
+		];
+	}
+	else if (bLocalRight)
+	{
+		BottomBar->AddSlot().AutoWidth()
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(bRightLocked ? TEXT("Waiting for player 1 to start") : TEXT("Confirm your fighter")))
+			.Font(FBMenuArt::PosterFont(14, 20))
+			.ColorAndOpacity(Quiet)
+		];
+	}
+
+	if (FighterSelectWidget.IsValid())
+	{
+		LocalViewport()->RemoveViewportWidgetContent(FighterSelectWidget.ToSharedRef());
+		FighterSelectWidget.Reset();
+	}
+	FighterSelectWidget = WrapForPad(SNew(SConstraintCanvas)
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.f, 0.f, 0.5f, 0.72f))
+		[
+			SNew(SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(LeftRed)
+			.Padding(FMargin(36.f, 28.f))
+			[
+				LeftCard
+			]
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.5f, 0.f, 1.f, 0.72f))
+		[
+			SNew(SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(RightBlue)
+			.Padding(FMargin(36.f, 28.f))
+			[
+				RightCard
+			]
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.04f, 0.74f, 0.96f, 0.96f))
+		[
+			SNew(SBorder)
+			.BorderImage(White)
+			.BorderBackgroundColor(FLinearColor(0.05f, 0.05f, 0.06f, 0.92f))
+			.Padding(FMargin(12.f))
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().FillHeight(1.f)
+				[
+					Grid
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
+				[
+					BottomBar
+				]
+			]
+		]
+		+ SConstraintCanvas::Slot()
+		.Anchors(FAnchors(0.04f, 0.965f, 0.5f, 1.f))
+		.Alignment(FVector2D(0.f, 0.f))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(FString::Printf(TEXT("FINAL BELL  %s"), FBBuild::Label)))
+			.Font(FBMenuArt::PosterFont(12, 40))
+			.ColorAndOpacity(Quiet)
+		]);
+	LocalViewport()->AddViewportWidgetContent(FighterSelectWidget.ToSharedRef(), 100);
+	bFighterSelectVisible = true;
+	bShowMouseCursor = true;
+	FocusMenuWidget(FighterSelectWidget);
+}
+
 void AFBSparringPlayerController::RebuildFighterSelect()
 {
+	if (UsesSplitSeats() && !bBuilderOpen)
+	{
+		RebuildSplitSelect();
+		return;
+	}
 	SelectRows.Reset();
 	SelectActions.Reset();
 	CreatorMeasure.Reset();
@@ -1796,7 +2261,7 @@ void AFBSparringPlayerController::RebuildFighterSelect()
 		RebuildFighterSelect();
 		return FReply::Handled();
 	});
-	StampSide(2);
+	StampSide(SeatMode == EFBMatchSeatMode::Online && MatchSeat == 0 ? 0 : 2);
 
 	auto AddIdentity = [&](TSharedRef<SVerticalBox> Body, const FFBFighterRecord& Fighter)
 	{

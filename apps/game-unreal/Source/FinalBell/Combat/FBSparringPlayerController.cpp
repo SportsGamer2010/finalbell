@@ -17,6 +17,7 @@
 #include "UI/FBBoutOverlay.h"
 #include "Combat/FBSparringGameState.h"
 #include "UI/FBGameInstance.h"
+#include "UI/FBBuildLabel.h"
 #include "UI/FBMenuArt.h"
 #include "EngineUtils.h"
 #include "InputKeyEventArgs.h"
@@ -192,18 +193,43 @@ void AFBSparringPlayerController::PlayerTick(float DeltaTime)
 		const float StickY = GetInputAnalogKeyState(EKeys::Gamepad_LeftY);
 		const float StickX = GetInputAnalogKeyState(EKeys::Gamepad_LeftX);
 		const float Axis = FMath::Abs(StickY) >= FMath::Abs(StickX) ? StickY : -StickX;
-		if (FMath::Abs(Axis) < 0.35f)
+		if (AFBSparringPlayerController* Primary = PrimarySelectController())
 		{
-			MenuStickRepeat = 0.f;
-		}
-		else
-		{
-			MenuStickRepeat -= DeltaTime;
-			if (MenuStickRepeat <= 0.f)
+			if (Primary->UsesSplitSeats() && Primary->bFighterSelectVisible && !Primary->bBuilderOpen)
 			{
-				MenuStickRepeat = 0.28f;
-				if (AFBSparringPlayerController* Primary = PrimarySelectController())
+				const bool bHorizontal = FMath::Abs(StickX) > FMath::Abs(StickY);
+				const float Amount = bHorizontal ? StickX : StickY;
+				if (FMath::Abs(Amount) < 0.35f)
 				{
+					MenuStickRepeat = 0.f;
+				}
+				else
+				{
+					MenuStickRepeat -= DeltaTime;
+					if (MenuStickRepeat <= 0.f)
+					{
+						MenuStickRepeat = 0.28f;
+						if (bHorizontal)
+						{
+							Primary->MoveSplitFromDevice(1, StickX > 0.f ? 1 : -1, 0);
+						}
+						else
+						{
+							Primary->MoveSplitFromDevice(1, 0, StickY > 0.f ? -1 : 1);
+						}
+					}
+				}
+			}
+			else if (FMath::Abs(Axis) < 0.35f)
+			{
+				MenuStickRepeat = 0.f;
+			}
+			else
+			{
+				MenuStickRepeat -= DeltaTime;
+				if (MenuStickRepeat <= 0.f)
+				{
+					MenuStickRepeat = 0.28f;
 					Primary->NudgeFromDevice(1, Axis > 0.f ? -1 : 1);
 				}
 			}
@@ -837,7 +863,7 @@ void AFBSparringPlayerController::ShowModeMenu()
 					]
 				]
 			]
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 34.f)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
 			[
 				SNew(STextBlock)
 				.Text(FText::FromString(TEXT("BELL")))
@@ -845,6 +871,13 @@ void AFBSparringPlayerController::ShowModeMenu()
 				.ColorAndOpacity(Paper)
 				.ShadowOffset(FVector2D(0.f, 3.f))
 				.ShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.55f))
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 22.f)
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(FString::Printf(TEXT("VERSION %s"), FBBuild::Label)))
+				.Font(FBMenuArt::PosterFont(14, 60))
+				.ColorAndOpacity(Quiet)
 			]
 			+ SVerticalBox::Slot().AutoHeight()
 			[
@@ -967,15 +1000,34 @@ void AFBSparringPlayerController::ShowOnlineMenu(bool bJoin)
 
 	if (bJoin)
 	{
-		List->AddSlot().AutoHeight().Padding(0.f, 8.f, 0.f, 12.f)
+		List->AddSlot().AutoHeight().Padding(0.f, 4.f, 0.f, 6.f)
 		[
-			SAssignNew(OnlineAddressBox, SEditableTextBox)
-			.Text(FText::FromString(OnlineAddressText))
-			.HintText(FText::FromString(TEXT("100.x.y.z:7777")))
-			.OnTextChanged_Lambda([this](const FText& Text)
-			{
-				OnlineAddressText = Text.ToString();
-			})
+			SNew(STextBlock)
+			.Text(FText::FromString(TEXT("HOST ADDRESS")))
+			.Font(FBMenuArt::PosterFont(14, 80))
+			.ColorAndOpacity(Paper)
+		];
+		List->AddSlot().AutoHeight().Padding(0.f, 0.f, 0.f, 14.f)
+		[
+			SNew(SBox)
+			.MinDesiredWidth(560.f)
+			.HeightOverride(64.f)
+			[
+				SNew(SBorder)
+				.BorderImage(White)
+				.BorderBackgroundColor(Paper)
+				.Padding(FMargin(12.f, 8.f))
+				[
+					SAssignNew(OnlineAddressBox, SEditableTextBox)
+					.Text(FText::FromString(OnlineAddressText))
+					.HintText(FText::FromString(TEXT("Click here, then paste 100.x.y.z:7777")))
+					.Font(FBMenuArt::PosterFont(22, 20))
+					.OnTextChanged_Lambda([this](const FText& Text)
+					{
+						OnlineAddressText = Text.ToString();
+					})
+				]
+			]
 		];
 		AddRow(TEXT("PASTE ADDRESS"), 3);
 		AddRow(TEXT("JOIN"), 4);
@@ -989,8 +1041,8 @@ void AFBSparringPlayerController::ShowOnlineMenu(bool bJoin)
 	}
 
 	const FString Body = bJoin
-		? TEXT("Paste the address your friend sent. It looks like 100.64.0.2:7777.")
-		: TEXT("You host. Your friend joins with the address copied to the clipboard.");
+		? FString::Printf(TEXT("Version %s. Click the white box and paste the address your friend sent."), FBBuild::Label)
+		: FString::Printf(TEXT("Version %s. You host. Your friend uses Join Match and pastes your address."), FBBuild::Label);
 	ModeFocus = FMath::Clamp(KeptFocus, 0, FMath::Max(0, ModeRows.Num() - 1));
 	PaintChrome(ModeRows, ModeFocus);
 
@@ -1399,9 +1451,13 @@ void AFBSparringPlayerController::OpenSeatedSelect(EFBMatchSeatMode Mode)
 	bLeftLocked = false;
 	bRightLocked = false;
 	bLocalSecondJoined = false;
-	if (HasAuthority() && MatchSeat < 0)
+	if (HasAuthority() && MatchSeat < 0 && (Mode != EFBMatchSeatMode::Online || IsLocalController()))
 	{
 		MatchSeat = 0;
+	}
+	if (HasAuthority() && Mode == EFBMatchSeatMode::Online && MatchSeat >= 0)
+	{
+		ClientAssignMatchSeat(MatchSeat);
 	}
 	if (UGameInstance* GI = GetGameInstance())
 	{
@@ -1460,7 +1516,7 @@ void AFBSparringPlayerController::NoteSecondJoined()
 	}
 	bLocalSecondJoined = true;
 	bSecondDeviceMissing = false;
-	SelectStatus = TEXT("Player 2 joined. That controller chooses the right side.");
+	SelectStatus = TEXT("Player 2 is on the blue cursor.");
 	RebuildFighterSelect();
 }
 
@@ -1481,6 +1537,11 @@ void AFBSparringPlayerController::NudgeFromDevice(int32 DeviceSeat, int32 Delta)
 void AFBSparringPlayerController::AcceptFromDevice(int32 DeviceSeat)
 {
 	MenuControllerId = DeviceSeat;
+	if (bFighterSelectVisible && UsesSplitSeats() && !bBuilderOpen)
+	{
+		ConfirmSplitCursor();
+		return;
+	}
 	if (bFighterSelectVisible)
 	{
 		ActivateSelectRow();
@@ -1539,8 +1600,24 @@ void AFBSparringPlayerController::PullLobbyPicks()
 	}
 	const bool bBlueChanged = State->BluePick.Id != SeenBlueId || (MatchSeat != 0 && State->bBlueReady != bLeftLocked);
 	const bool bRedChanged = State->RedPick.Id != SeenRedId || (MatchSeat != 1 && State->bRedReady != bRightLocked);
-	if (!bBlueChanged && !bRedChanged)
+	bool bHoverChanged = false;
+	if (MatchSeat != 0 && State->BlueHover >= 0 && State->BlueHover < SelectRoster.Num() && LeftFocus != State->BlueHover)
 	{
+		LeftFocus = State->BlueHover;
+		bHoverChanged = true;
+	}
+	if (MatchSeat != 1 && State->RedHover >= 0 && State->RedHover < SelectRoster.Num() && RightFocus != State->RedHover)
+	{
+		RightFocus = State->RedHover;
+		bHoverChanged = true;
+	}
+	if (!bBlueChanged && !bRedChanged && !bHoverChanged)
+	{
+		return;
+	}
+	if (bHoverChanged && !bBlueChanged && !bRedChanged)
+	{
+		RebuildFighterSelect();
 		return;
 	}
 	SeenBlueId = State->BluePick.Id;
@@ -1567,17 +1644,27 @@ void AFBSparringPlayerController::PullLobbyPicks()
 	RebuildFighterSelect();
 }
 
+void AFBSparringPlayerController::ClientAssignMatchSeat_Implementation(int32 Seat)
+{
+	MatchSeat = Seat;
+	if (SeatMode == EFBMatchSeatMode::Unset)
+	{
+		SeatMode = EFBMatchSeatMode::Online;
+	}
+	if (!bFighterSelectVisible || SeatMode != EFBMatchSeatMode::Online)
+	{
+		return;
+	}
+	ActiveSide = MatchSeat == 1 ? 1 : 0;
+	SelectStatus = MatchSeat == 1
+		? TEXT("You are player 2. Confirm the fighter on the right.")
+		: TEXT("You are player 1. Confirm the fighter on the left.");
+	RebuildFighterSelect();
+}
+
 void AFBSparringPlayerController::OnRep_MatchSeat()
 {
-	if (SeatMode == EFBMatchSeatMode::Online && bFighterSelectVisible)
-	{
-		ActiveSide = MatchSeat == 1 ? 1 : 0;
-		if (MatchSeat == 1)
-		{
-			SelectStatus = TEXT("You are player 2. Confirm the fighter on the right.");
-		}
-		RebuildFighterSelect();
-	}
+	ClientAssignMatchSeat_Implementation(MatchSeat);
 }
 
 void AFBSparringPlayerController::ClientMatchClosed_Implementation(const FString& Why)
@@ -1796,6 +1883,32 @@ void AFBSparringPlayerController::PollMenuStick(float DeltaTime)
 	}
 	const float StickY = GetInputAnalogKeyState(EKeys::Gamepad_LeftY);
 	const float StickX = GetInputAnalogKeyState(EKeys::Gamepad_LeftX);
+	if (bFighterSelectVisible && UsesSplitSeats() && !bBuilderOpen)
+	{
+		MenuControllerId = 0;
+		const bool bHorizontal = FMath::Abs(StickX) > FMath::Abs(StickY);
+		const float Amount = bHorizontal ? StickX : StickY;
+		if (FMath::Abs(Amount) < 0.35f)
+		{
+			MenuStickRepeat = 0.f;
+			return;
+		}
+		MenuStickRepeat -= DeltaTime;
+		if (MenuStickRepeat > 0.f)
+		{
+			return;
+		}
+		MenuStickRepeat = 0.28f;
+		if (bHorizontal)
+		{
+			MoveSplitCursor(StickX > 0.f ? 1 : -1, 0);
+		}
+		else
+		{
+			MoveSplitCursor(0, StickY > 0.f ? -1 : 1);
+		}
+		return;
+	}
 	const float Axis = FMath::Abs(StickY) >= FMath::Abs(StickX) ? StickY : -StickX;
 	if (FMath::Abs(Axis) < 0.35f)
 	{
@@ -2050,6 +2163,51 @@ bool AFBSparringPlayerController::RouteMenuKey(const FKey& Key, bool bRepeat)
 		}
 		Mark();
 		return true;
+	}
+	if (bFighterSelectVisible && UsesSplitSeats() && !bBuilderOpen)
+	{
+		if (bUp)
+		{
+			MoveSplitCursor(0, -1);
+			Mark();
+			return true;
+		}
+		if (bDown)
+		{
+			MoveSplitCursor(0, 1);
+			Mark();
+			return true;
+		}
+		if (bPrev)
+		{
+			MoveSplitCursor(-1, 0);
+			Mark();
+			return true;
+		}
+		if (bNext)
+		{
+			MoveSplitCursor(1, 0);
+			Mark();
+			return true;
+		}
+		if (bRepeat)
+		{
+			Mark();
+			return true;
+		}
+		if (bAccept)
+		{
+			ConfirmSplitCursor();
+			Mark();
+			return true;
+		}
+		if (bBack || bOptions)
+		{
+			BackMenu(bOptions);
+			Mark();
+			return true;
+		}
+		return false;
 	}
 	if (bFighterSelectVisible && !IsSequentialSelect() == false && MenuControllerId > 0 && SeatMode != EFBMatchSeatMode::LocalVersus)
 	{

@@ -67,7 +67,7 @@ public:
 	FString RefereeCall;
 
 	/** Bump when the lobby record layout changes. A guest with a different number is refused. */
-	static constexpr int32 LobbyProtocol = 1;
+	static constexpr int32 LobbyProtocol = 2;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
 	int32 LobbyProtocolSeen = LobbyProtocol;
@@ -83,6 +83,13 @@ public:
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
 	bool bRedReady = false;
+
+	/** Roster index under each cursor. Both screens draw both, so the cursors move together. */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	int32 BlueHover = 0;
+
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
+	int32 RedHover = 1;
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "FinalBell|Lobby")
 	FString LobbyNotice;
