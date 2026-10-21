@@ -63,10 +63,11 @@ namespace
 
 	constexpr float ModifierTapSeconds = 0.25f;
 
-	float HookPathT(float Alpha)
+	float HookPathT(float Alpha, bool bReturning)
 	{
 		const float T = FMath::Clamp(Alpha, 0.f, 1.f);
-		return T * T * (3.f - 2.f * T);
+		// The strike eases in and snaps onto contact. The way home is direct.
+		return bReturning ? T : (T * T);
 	}
 
 	FVector HookBezier(const FVector& Guard, const FVector& Wide, const FVector& Contact, float T)
@@ -79,20 +80,20 @@ namespace
 	/**
 	 * Capsule-space glove center for the prototype hook.
 	 * Orthodox Y is the fighter's right. Southpaw flips that Y.
-	 * The wide point is out past the punching shoulder. Contact crosses the centerline
-	 * and stays short of a straight punch so the elbow can stay bent.
+	 * The path stays level. The lead hook is the shorter L. The rear hook
+	 * opens a little farther and turns more. Neither drops through the chest.
 	 */
 	FVector HookGloveLocal(EFBStance Stance, EFBAttackId Attack, float PathT, bool bBody)
 	{
 		const bool bLead = Attack == EFBAttackId::LeadHook;
 		const float Height = bBody ? 22.f : 50.f;
 		const float StartY = bLead ? -14.f : 14.f;
-		const float WideY = bLead ? -40.f : 40.f;
-		const float ContactY = bLead ? 16.f : -16.f;
-		const float ContactX = bLead ? 38.f : 44.f;
+		const float WideY = bLead ? -26.f : 30.f;
+		const float ContactY = bLead ? 18.f : -22.f;
+		const float ContactX = bLead ? 34.f : 50.f;
 		const FVector Point = HookBezier(
-			FVector(26.f, StartY, Height),
-			FVector(18.f, WideY, Height - 2.f),
+			FVector(24.f, StartY, Height),
+			FVector(20.f, WideY, Height),
 			FVector(ContactX, ContactY, Height),
 			PathT);
 		if (Stance == EFBStance::Southpaw)
@@ -732,7 +733,7 @@ FVector AFBBoxerCharacter::GetGlovePoint(EFBAttackId Attack, float Alpha) const
 
 float AFBBoxerCharacter::GetHookStrikeAlpha() const
 {
-	return HookPathT(PunchPoseAlpha);
+	return HookPathT(PunchPoseAlpha, bHookReturning);
 }
 
 bool AFBBoxerCharacter::SweepGlove(AActor* Target, const FVector& From, const FVector& To, float Radius, bool bBodyShot, bool bGuardCounts, bool& bOutBlocked) const
@@ -1242,30 +1243,45 @@ void AFBBoxerCharacter::UpdateDisplayedPunch(float DeltaSeconds)
 	{
 		if (Phase == EFBAttackPhase::Startup)
 		{
+			bHookContactShown = false;
+			bHookReturning = false;
 			TargetAlpha = 0.2f;
 			InterpRate = 6.f;
 		}
-		else if (Phase == EFBAttackPhase::Active)
+		else if (Phase == EFBAttackPhase::Active && !bHookContactShown)
 		{
+			bHookReturning = false;
 			TargetAlpha = 1.f;
 			InterpRate = HookStrikeInterp;
 		}
 		else
 		{
+			// Contact has been shown, or the window is over. Come straight back to the cheek.
+			bHookReturning = true;
+			TargetAlpha = 0.f;
 			InterpRate = HookReturnInterp;
 		}
 	}
-	else if (Phase == EFBAttackPhase::Startup)
+	else
 	{
-		TargetAlpha = 0.55f;
-		InterpRate = 18.f;
-	}
-	else if (Phase == EFBAttackPhase::Active)
-	{
-		TargetAlpha = 1.f;
-		InterpRate = 18.f;
+		bHookContactShown = false;
+		bHookReturning = false;
+		if (Phase == EFBAttackPhase::Startup)
+		{
+			TargetAlpha = 0.55f;
+			InterpRate = 18.f;
+		}
+		else if (Phase == EFBAttackPhase::Active)
+		{
+			TargetAlpha = 1.f;
+			InterpRate = 18.f;
+		}
 	}
 	PunchPoseAlpha = FMath::FInterpTo(PunchPoseAlpha, TargetAlpha, DeltaSeconds, InterpRate);
+	if (bHook && Phase == EFBAttackPhase::Active && PunchPoseAlpha >= 0.97f)
+	{
+		bHookContactShown = true;
+	}
 	if (LiveAttack == EFBAttackId::None && PunchPoseAlpha < 0.04f)
 	{
 		DisplayAttack = EFBAttackId::None;
@@ -1658,7 +1674,7 @@ void AFBBoxerCharacter::ApplyShapePose()
 	case EFBAttackId::RearHook:
 	{
 		// Prototype arc. The shape glove is the ball, so it sits on the sweep point.
-		const float PathT = HookPathT(PunchPoseAlpha);
+		const float PathT = HookPathT(PunchPoseAlpha, bHookReturning);
 		const FVector Arc = HookGloveLocal(Stance, DisplayAttack, PathT, bDisplayBody);
 		const float OntoArc = FMath::SmoothStep(0.f, 0.35f, PathT);
 		const bool bLeadHook = DisplayAttack == EFBAttackId::LeadHook;
@@ -1910,10 +1926,12 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	CommitComponentRotation(Skel, Pelvis, FQuat(MeshRight, FMath::DegreesToRadians(Bend.PelvisPitch)) * FQuat(MeshUp, FMath::DegreesToRadians(14.f * LeadYaw + Twist.PelvisYaw)) * FQuat(MeshForward, FMath::DegreesToRadians(Bend.PelvisRoll)), Local, ComponentSpace);
 	const bool bLeadHookPose = DisplayAttack == EFBAttackId::LeadHook;
 	const bool bRearHookPose = DisplayAttack == EFBAttackId::RearHook;
-	const float HookT = (bLeadHookPose || bRearHookPose) ? HookPathT(PunchPoseAlpha) : 0.f;
+	const float HookT = (bLeadHookPose || bRearHookPose) ? HookPathT(PunchPoseAlpha, bHookReturning) : 0.f;
 	if (HookT > 0.02f)
 	{
-		const FVector Weight = Side(bLeadHookPose ? FVector(3.f, -4.f, -1.5f) : FVector(2.f, 4.f, -1.5f)) * HookT;
+		// Lead hook pushes off the front foot and finishes over the back foot.
+		// Rear hook drives from the back foot and finishes toward the lead side.
+		const FVector Weight = Side(bLeadHookPose ? FVector(-2.f, 5.f, -1.f) : FVector(4.f, -5.f, -2.f)) * HookT;
 		CommitComponentTranslation(Skel, Pelvis, ToMesh(Weight) - ToMesh(FVector::ZeroVector), Local, ComponentSpace);
 	}
 	if (ShownKneeDrop > 0.5f)
@@ -1951,11 +1969,13 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	FVector RearFootTarget = Side(FVector(-18.f, 18.f, -82.f));
 	if (bLeadHookPose)
 	{
-		LeadFootTarget += Side(FVector(1.5f, -2.5f, 1.5f)) * HookT;
+		// Pivot the lead foot. The rear foot stays down.
+		LeadFootTarget += Side(FVector(1.5f, -2.5f, 1.f)) * HookT;
 	}
 	else if (bRearHookPose)
 	{
-		RearFootTarget += Side(FVector(-1.5f, 2.5f, 1.5f)) * HookT;
+		// Rear heel lifts. The ball stays near the floor.
+		RearFootTarget += Side(FVector(-1.5f, 2.f, 3.5f)) * HookT;
 	}
 	SolveLimb(Skel, LeadThigh, LeadCalf, LeadFootBone, ToMesh(LeadFootTarget), ToMesh(Side(FVector(52.f, -16.f, -30.f))), Local, ComponentSpace);
 	SolveLimb(Skel, RearThigh, RearCalf, RearFootBone, ToMesh(RearFootTarget), ToMesh(Side(FVector(8.f, 18.f, -30.f))), Local, ComponentSpace);
@@ -1965,7 +1985,7 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 	}
 	else if (bRearHookPose)
 	{
-		CommitComponentRotation(Skel, RearFootBone, FQuat(MeshUp, FMath::DegreesToRadians(HookFootPivotDegrees * HookT * LeadYaw)), Local, ComponentSpace);
+		CommitComponentRotation(Skel, RearFootBone, FQuat(MeshRight, FMath::DegreesToRadians(-10.f * HookT)) * FQuat(MeshUp, FMath::DegreesToRadians(HookFootPivotDegrees * 1.4f * HookT * LeadYaw)), Local, ComponentSpace);
 	}
 
 	const int32 LeftClav = Bone(TEXT("clavicle_l"));
@@ -2103,8 +2123,8 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 		const FVector TowardShoulder = (Shoulder - Glove).GetSafeNormal();
 		const FVector HandOnArc = Glove + TowardShoulder * 10.f;
 		const FVector PoleOnArc = Shoulder + Side(bLeadHook
-			? (bDisplayBody ? FVector(4.f, -32.f, -18.f) : FVector(4.f, -34.f, -6.f))
-			: (bDisplayBody ? FVector(4.f, 32.f, -18.f) : FVector(4.f, 34.f, -6.f)));
+			? (bDisplayBody ? FVector(2.f, -24.f, -16.f) : FVector(2.f, -22.f, -10.f))
+			: (bDisplayBody ? FVector(4.f, 28.f, -16.f) : FVector(6.f, 26.f, -8.f)));
 		const float OntoArc = FMath::SmoothStep(0.f, 0.35f, HookT);
 		if (bLeadHook)
 		{
@@ -2158,6 +2178,27 @@ void AFBBoxerCharacter::ApplySkinnedPose(float DeltaSeconds)
 
 	SolveLimb(Skel, LeadUpper, LeadLower, LeadHandBone, ToMesh(LeadHand), ToMesh(LeadPole), Local, ComponentSpace);
 	SolveLimb(Skel, RearUpper, RearLower, RearHandBone, ToMesh(RearHand), ToMesh(RearPole), Local, ComponentSpace);
+	auto TwistPalm = [&](int32 Lower, int32 HandBone, float Degrees)
+	{
+		if (FMath::Abs(Degrees) < 0.5f || !ComponentSpace.IsValidIndex(Lower) || !ComponentSpace.IsValidIndex(HandBone))
+		{
+			return;
+		}
+		const FVector Axis = (ComponentSpace[HandBone].GetLocation() - ComponentSpace[Lower].GetLocation()).GetSafeNormal();
+		if (Axis.IsNearlyZero())
+		{
+			return;
+		}
+		CommitComponentRotation(Skel, HandBone, FQuat(Axis, FMath::DegreesToRadians(Degrees)), Local, ComponentSpace);
+	};
+	if (bLeadHookPose)
+	{
+		TwistPalm(LeadLower, LeadHandBone, -HookPalmDegrees * HookT * LeadYaw);
+	}
+	else if (bRearHookPose)
+	{
+		TwistPalm(RearLower, RearHandBone, HookPalmDegrees * HookT * LeadYaw);
+	}
 
 	auto BulkBone = [&](const TCHAR* Name, float Bulk, float Length = 1.f)
 	{
@@ -3525,7 +3566,7 @@ float AFBBoxerCharacter::ComputeDisplayedPunchYaw() const
 	}
 	const float LeadYaw = (Stance == EFBStance::Southpaw) ? -1.f : 1.f;
 	const bool bHook = DisplayAttack == EFBAttackId::LeadHook || DisplayAttack == EFBAttackId::RearHook;
-	const float Shaped = bHook ? HookPathT(PunchPoseAlpha) : PunchPoseAlpha;
+	const float Shaped = bHook ? HookPathT(PunchPoseAlpha, bHookReturning) : PunchPoseAlpha;
 	return PunchYaw * Shaped * LeadYaw;
 }
 

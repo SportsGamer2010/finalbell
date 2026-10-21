@@ -295,10 +295,17 @@ public:
 	float HookGloveRadius = 22.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "70.0"))
-	float HookLeadYawDegrees = 40.f;
+	float HookLeadYawDegrees = 34.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "70.0"))
-	float HookRearYawDegrees = 44.f;
+	float HookRearYawDegrees = 56.f;
+
+	/**
+	 * Forearm twist at contact so the palm turns down. Positive pronates an orthodox lead hand.
+	 * The mannequin wrist axis was not measured in play. Set this to 0 if the glove turns the wrong way.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "-120.0", ClampMax = "120.0"))
+	float HookPalmDegrees = 70.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "0.0", ClampMax = "35.0"))
 	float HookFootPivotDegrees = 18.f;
@@ -311,9 +318,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "4.0", ClampMax = "40.0"))
 	float HookStrikeInterp = 26.f;
 
-	/** How fast the posed hook returns to the guard. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "2.0", ClampMax = "20.0"))
-	float HookReturnInterp = 5.5f;
+	/** How fast the posed hook returns to the guard after contact. Higher is a quicker hand. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Hook", meta = (ClampMin = "8.0", ClampMax = "40.0"))
+	float HookReturnInterp = 18.f;
 
 	/** Walk speed before stun and body damage shorten the step. The capsule size stays 34 x 90. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FinalBell|Damage", meta = (ClampMin = "100.0", ClampMax = "600.0"))
@@ -665,6 +672,10 @@ protected:
 	float LastSentFacingOffset = 0.f;
 	bool bPunchStickConsumed = false;
 	float PunchPoseAlpha = 0.f;
+	/** True on the frame the hook pose has reached contact, so the next frame can leave. */
+	bool bHookContactShown = false;
+	/** True while the hook is on the way back to the guard. The path home is direct. */
+	bool bHookReturning = false;
 	EFBAttackId DisplayAttack = EFBAttackId::None;
 	bool bDisplayBody = false;
 	float PoseClock = 0.f;

@@ -1,5 +1,17 @@
 # Final Bell — Progress Log
 
+## 2026-10-21 — Bluetooth pads beside USB DualSense
+
+`DefaultInput.ini` no longer keeps only the first GameInput device of a kind. A Bluetooth controller can be used on its own or while a PS5 pad is plugged in over USB. The USB DualSense button map is unchanged. Pair the wireless pad in Windows before opening the editor. Play was not run with a Bluetooth controller.
+
+## 2026-10-21 — Hook reference from three lessons
+
+The posed hook now follows three videos as a picture of the technique, not as captured motion. FightCamp's lead and rear hook lesson, and MyBoxingCoach's mid-range left hook and mid-range right hook. Nothing was imported from the videos.
+
+The lead hook stays the shorter L, pushes off the front foot, and finishes with weight toward the back foot. The rear foot stays down. The rear hook turns farther, drives from the back leg, lifts the rear heel, and shifts toward the lead side. Both fists stay level, accelerate into contact, and the other glove stays at the cheek. Palm down is a forearm twist of 70 degrees. That wrist axis has not been checked on the mannequin. Set Hook Palm Degrees to 0 if the glove turns the wrong way.
+
+`Build.bat FinalBellEditor Win64 Development` finished with `Result: Succeeded` (about 36s). Play was not run, so the pose has not been reviewed on the fighter.
+
 ## 2026-10-21 — Prototype stationary hooks
 
 Lead and rear hooks still use the posed mannequin. There is no hook Animation Sequence, FBX, or Control Rig clip in the project, so this is not a captured punch and it has not been reviewed in play.

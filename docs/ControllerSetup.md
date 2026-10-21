@@ -15,18 +15,22 @@
 - `bProcessGamepad=True`
 - `bProcessController=True`
 - `bProcessRawInput=True`
-- DualSense / DualSense Edge vendor+product IDs (Sony `0x054C`)
+- DualSense / DualSense Edge vendor+product IDs (Sony `0x054C`). Bluetooth uses those same ids.
+- `bDoNotProcessDuplicateCapabilitiesForSingleUser=False`, so a Bluetooth pad is still read while a USB DualSense is connected
 
 **You must fully quit and reopen the Unreal Editor** after this config change (GameInput reads settings at startup).
 
 ## Test steps
 
 1. Quit Unreal completely (also close Live Coding console).
-2. Plug DualSense in with **USB**.
-3. Reopen `FinalBell.uproject`.
-4. Play on `Ring_P1`, click the game viewport.
-5. Output Log should show `GameInput flags: Gamepad=1 Controller=1` and **more than 1** connected device.
-6. Left stick moves blue; □ / ✕ jabs.
+2. Connect a pad. A DualSense can be **USB** or **Bluetooth**. An Xbox pad and other Bluetooth gamepads that Windows shows as gamepads use the same path.
+3. For Bluetooth, pair the pad in Windows Settings first and wait until it shows as connected. Unplug it if you are checking the wireless path on its own.
+4. Reopen `FinalBell.uproject`. GameInput reads this file at startup.
+5. Play on `Ring_P1`, click the game viewport.
+6. Output Log should show `GameInput flags: Gamepad=1 Controller=1` and **more than 1** connected device.
+7. Left stick moves blue; □ / ✕ jabs.
+
+USB and Bluetooth can be used together. The USB DualSense keeps its Sony button map. A second pad is no longer ignored just because the first one is already connected.
 
 ## Two controllers (2-player PIE)
 
